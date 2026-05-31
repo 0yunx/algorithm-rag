@@ -15,7 +15,7 @@ import {
   Users,
 } from 'lucide-react';
 import { api, clearToken, type ChatLog, type Conversation, type ConversationSearchResult, type ConversationSummary, type DocumentItem, type Prompt, type RegistrationRequest, type Role, type Source, type User } from '@/lib/api';
-import { kindLabel, statusLabel, statusTone } from '@/lib/labels';
+import { kindLabel, statusLabel, statusTone, visibilityLabel, visibilityTone } from '@/lib/labels';
 import { Badge, Button, Card, DangerButton, Input, PasswordInput, SecondaryButton, Select, Textarea, ThemeToggle } from '@/components/ui';
 
 function formatDate(value: string | null) {
@@ -192,7 +192,7 @@ export default function AdminPage() {
     setUploadError('');
     setUploading(true);
     try {
-      await api.upload(file);
+      await api.upload(file, 'shared');
       await loadCore(true);
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : '上传失败');
@@ -379,7 +379,7 @@ export default function AdminPage() {
             <div className="max-h-[26rem] space-y-3 overflow-y-auto pr-1">
               {loadingCore && !documents.length ? <p className="text-sm text-slate-500 dark:text-slate-400">加载中...</p> : pendingDocuments.length ? pendingDocuments.map((document) => (
                 <div key={document.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
-                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-all text-sm font-medium">{document.filename}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{kindLabel(document.kind)} · 上传者 {usersById[document.uploaded_by] || `#${document.uploaded_by}`}</p></div><Badge tone={statusTone(document.status)}>{statusLabel(document.status)}</Badge></div>
+                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-all text-sm font-medium">{document.filename}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{kindLabel(document.kind)} · 上传者 {usersById[document.uploaded_by] || `#${document.uploaded_by}`}</p><div className="mt-2 flex flex-wrap gap-2"><Badge tone={visibilityTone(document.visibility)}>{visibilityLabel(document.visibility)}</Badge></div></div><Badge tone={statusTone(document.status)}>{statusLabel(document.status)}</Badge></div>
                   <div className="mt-3 flex gap-2"><Button className="text-xs" onClick={() => void approveDocument(document.id)} disabled={approvingId === document.id}>{approvingId === document.id ? <LoaderCircle size={14} className="animate-spin" /> : null}审核通过</Button></div>
                 </div>
               )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">当前没有待审核文档。</p>}
@@ -392,7 +392,7 @@ export default function AdminPage() {
               {documents.length ? documents.map((document) => {
                 const canRetry = document.status === 'failed' || document.status === 'processing';
                 return <div key={document.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
-                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-all text-sm font-medium">{document.filename}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">#{document.id} · {kindLabel(document.kind)} · 上传者 {usersById[document.uploaded_by] || `#${document.uploaded_by}`}</p></div><Badge tone={statusTone(document.status)}>{statusLabel(document.status)}</Badge></div>
+                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-all text-sm font-medium">{document.filename}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">#{document.id} · {kindLabel(document.kind)} · 上传者 {usersById[document.uploaded_by] || `#${document.uploaded_by}`}</p><div className="mt-2 flex flex-wrap gap-2"><Badge tone={visibilityTone(document.visibility)}>{visibilityLabel(document.visibility)}</Badge></div></div><Badge tone={statusTone(document.status)}>{statusLabel(document.status)}</Badge></div>
                   <div className="mt-3 grid gap-1 text-xs text-slate-500 dark:text-slate-400"><p>创建：{formatDate(document.created_at)}</p><p>更新：{formatDate(document.updated_at)}</p><p>审核者：{document.approved_by ? usersById[document.approved_by] || `#${document.approved_by}` : '无'}</p>{document.error_message && <p className="rounded-xl border border-red-200 bg-red-50 p-2 text-red-700 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">错误：{document.error_message}</p>}</div>
                   {canRetry && <div className="mt-3 flex gap-2"><SecondaryButton className="text-xs" onClick={() => void retryDocument(document.id)} disabled={retryingId === document.id}>{retryingId === document.id ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}重试索引</SecondaryButton></div>}
                 </div>;

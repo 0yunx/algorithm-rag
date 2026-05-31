@@ -2,7 +2,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -16,6 +16,7 @@ from database import (
     Document,
     DocumentKind,
     DocumentStatus,
+    DocumentVisibility,
     Prompt,
     RegistrationRequest,
     RegistrationStatus,
@@ -186,6 +187,40 @@ def document_kind(filename: str) -> DocumentKind:
     raise HTTPException(status_code=400, detail="仅支持 .pdf 和 .md 文件")
 
 
+def visible_document_filter(current_user: User):
+    if current_user.role == UserRole.admin:
+        return True
+    return (
+        (Document.uploaded_by == current_user.id)
+        | (Document.visibility == DocumentVisibility.system)
+        | ((Document.visibility == DocumentVisibility.shared) & (Document.status == DocumentStatus.ready))
+    )
+
+
+def normalize_upload_visibility(value: str | None, current_user: User) -> DocumentVisibility:
+    if current_user.role == UserRole.admin:
+        return DocumentVisibility.shared
+    if value is None:
+        return DocumentVisibility.private
+    try:
+        visibility = DocumentVisibility(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="visibility 只能是 private 或 shared") from exc
+    if visibility not in {DocumentVisibility.private, DocumentVisibility.shared}:
+        raise HTTPException(status_code=400, detail="普通用户只能选择 private 或 shared")
+    return visibility
+
+
+def get_visible_document_or_404(db: Session, document_id: int, current_user: User) -> Document:
+    query = db.query(Document).filter(Document.id == document_id)
+    if current_user.role != UserRole.admin:
+        query = query.filter(visible_document_filter(current_user))
+    document = query.first()
+    if not document:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return document
+
+
 def index_document(document_id: int) -> None:
     db = SessionLocal()
     try:
@@ -255,7 +290,7 @@ def me(current_user: User = Depends(get_current_user)) -> UserOut:
 def list_documents(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[DocumentOut]:
     query = db.query(Document).order_by(Document.created_at.desc())
     if current_user.role != UserRole.admin:
-        query = query.filter(Document.status.in_([DocumentStatus.pending_approval, DocumentStatus.processing, DocumentStatus.ready, DocumentStatus.failed]))
+        query = query.filter(visible_document_filter(current_user))
     return [DocumentOut.model_validate(document) for document in query.all()]
 
 
@@ -263,10 +298,12 @@ def list_documents(current_user: User = Depends(get_current_user), db: Session =
 def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    visibility: str | None = Form(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> DocumentOut:
     kind = document_kind(file.filename or "")
+    document_visibility = normalize_upload_visibility(visibility, current_user)
     max_bytes = settings.max_upload_mb * 1024 * 1024
     upload_root = Path(settings.upload_dir)
     upload_root.mkdir(parents=True, exist_ok=True)
@@ -286,6 +323,7 @@ def upload_document(
         filename=file.filename or stored_name,
         stored_path=str(stored_path),
         kind=kind,
+        visibility=document_visibility,
         status=status,
         uploaded_by=current_user.id,
         approved_by=current_user.id if current_user.role == UserRole.admin else None,
@@ -305,17 +343,23 @@ def admin_upload_document(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> DocumentOut:
-    return upload_document(background_tasks=background_tasks, file=file, current_user=admin, db=db)
+    return upload_document(background_tasks=background_tasks, file=file, visibility=None, current_user=admin, db=db)
 
 
 @app.post("/upload", response_model=DocumentOut)
 def legacy_upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    visibility: str | None = Form(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> DocumentOut:
-    return upload_document(background_tasks=background_tasks, file=file, current_user=current_user, db=db)
+    return upload_document(background_tasks=background_tasks, file=file, visibility=visibility, current_user=current_user, db=db)
+
+
+@app.get("/documents/{document_id}", response_model=DocumentOut)
+def get_document(document_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> DocumentOut:
+    return DocumentOut.model_validate(get_visible_document_or_404(db, document_id, current_user))
 
 
 @app.post("/documents/{document_id}/approve", response_model=DocumentOut)

@@ -23,3 +23,19 @@ export function kindLabel(kind: string) {
   };
   return labels[kind] || '未知类型';
 }
+
+export function visibilityTone(visibility: string): 'neutral' | 'green' | 'yellow' | 'red' | 'blue' {
+  if (visibility === 'system') return 'blue';
+  if (visibility === 'shared') return 'green';
+  if (visibility === 'private') return 'yellow';
+  return 'neutral';
+}
+
+export function visibilityLabel(visibility: string) {
+  const labels: Record<string, string> = {
+    private: '私有',
+    shared: '共享',
+    system: '系统',
+  };
+  return labels[visibility] || '未知可见性';
+}

@@ -3,6 +3,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8
 export type Role = 'admin' | 'people';
 export type DocumentStatus = 'pending_approval' | 'processing' | 'ready' | 'failed';
 export type DocumentKind = 'pdf' | 'markdown';
+export type DocumentVisibility = 'private' | 'shared' | 'system';
 export type RegistrationStatus = 'pending' | 'approved' | 'rejected';
 
 export type User = {
@@ -31,6 +32,7 @@ export type DocumentItem = {
   id: number;
   filename: string;
   kind: DocumentKind;
+  visibility: DocumentVisibility;
   status: DocumentStatus;
   error_message: string | null;
   uploaded_by: number;
@@ -158,9 +160,10 @@ export const api = {
     request<{ id: number; status: RegistrationStatus; message: string }>('/register', { method: 'POST', body: JSON.stringify(payload) }),
   me: () => request<User>('/auth/me'),
   documents: () => request<DocumentItem[]>('/documents'),
-  upload(file: File) {
+  upload(file: File, visibility: DocumentVisibility = 'private') {
     const form = new FormData();
     form.append('file', file);
+    form.append('visibility', visibility);
     return request<DocumentItem>('/documents/upload', { method: 'POST', body: form });
   },
   approve: (id: number) => request<DocumentItem>(`/documents/${id}/approve`, { method: 'POST' }),

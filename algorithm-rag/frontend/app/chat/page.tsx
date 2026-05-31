@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BrainCircuit, MessageSquarePlus, Search, Send, Trash2, Upload } from 'lucide-react';
-import { api, clearToken, type ConversationSummary, type DocumentItem, type Source, type User } from '@/lib/api';
-import { kindLabel, statusLabel, statusTone } from '@/lib/labels';
+import { api, clearToken, type ConversationSummary, type DocumentItem, type DocumentVisibility, type Source, type User } from '@/lib/api';
+import { kindLabel, statusLabel, statusTone, visibilityLabel, visibilityTone } from '@/lib/labels';
 import { Badge, Button, Card, DangerButton, Input, SecondaryButton, Textarea, ThemeToggle } from '@/components/ui';
 
 function useAuthGuard() {
@@ -34,6 +34,7 @@ export default function ChatPage() {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<Awaited<ReturnType<typeof api.searchConversations>>>([]);
   const [error, setError] = useState('');
+  const [uploadVisibility, setUploadVisibility] = useState<DocumentVisibility>('private');
   const [loading, setLoading] = useState(false);
 
   async function loadDocuments() {
@@ -77,7 +78,7 @@ export default function ChatPage() {
   async function upload(file: File) {
     setError('');
     try {
-      await api.upload(file);
+      await api.upload(file, uploadVisibility);
       await loadDocuments();
     } catch (err) {
       setError(err instanceof Error ? err.message : '上传失败');
@@ -152,10 +153,14 @@ export default function ChatPage() {
           {searchResults.length ? <div className="mb-3 max-h-40 space-y-2 overflow-y-auto rounded-xl border border-slate-200 p-2 dark:border-slate-800">{searchResults.map((result) => <button key={`${result.conversation_id}-${result.message_id}`} className="block w-full rounded-lg p-2 text-left text-xs hover:bg-slate-100 dark:hover:bg-slate-900" onClick={() => void openConversation(result.conversation_id, result.message_id)}><span className="font-semibold">{result.title}</span><span className="mt-1 line-clamp-2 block text-slate-500 dark:text-slate-400">{result.snippet}</span></button>)}</div> : null}
           <div className="mb-4 min-h-0 max-h-56 space-y-2 overflow-y-auto pr-1">{conversations.map((conversation) => <div key={conversation.id} className={`rounded-xl border p-3 ${conversation.id === activeConversationId ? 'border-sky-300 bg-sky-50 dark:border-sky-700 dark:bg-sky-950/40' : 'border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/50'}`}><button className="block w-full text-left" onClick={() => void openConversation(conversation.id)}><p className="truncate text-sm font-medium">{conversation.title}</p><p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{conversation.last_message_preview || '暂无消息'}</p></button><DangerButton className="mt-2 text-xs" onClick={() => void deleteConversation(conversation.id)}><Trash2 size={14} />删除</DangerButton></div>)}</div>
           <input ref={fileInputRef} className="hidden" type="file" accept=".pdf,.md" onChange={(event) => event.target.files?.[0] && upload(event.target.files[0])} />
+          <div className="mb-3 grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs dark:border-slate-800 dark:bg-slate-950/50">
+            <label className="flex items-center gap-2"><input type="radio" name="uploadVisibility" checked={uploadVisibility === 'private'} onChange={() => setUploadVisibility('private')} />私有</label>
+            <label className="flex items-center gap-2"><input type="radio" name="uploadVisibility" checked={uploadVisibility === 'shared'} onChange={() => setUploadVisibility('shared')} />共享</label>
+          </div>
           <Button className="mb-4 w-full" onClick={() => fileInputRef.current?.click()}><Upload size={16} />提交 PDF / MD</Button>
-          <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-200">普通用户上传后需要管理员审核。</p>
+          <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-200">普通用户上传后需要管理员审核；审核通过后，私有文档仅自己可查，共享文档所有用户可查。</p>
           {error && <p className="mb-3 rounded-xl border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-200">{error}</p>}
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">{documents.map((doc) => <div key={doc.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/50"><div className="mb-2 flex items-start justify-between gap-2"><p className="break-all text-sm font-medium">{doc.filename}</p><Badge tone={statusTone(doc.status)}>{statusLabel(doc.status)}</Badge></div><p className="text-xs text-slate-500 dark:text-slate-400">{kindLabel(doc.kind)}</p>{doc.error_message && <p className="mt-2 text-xs text-red-600 dark:text-red-200">{doc.error_message}</p>}</div>)}</div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">{documents.map((doc) => <div key={doc.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/50"><div className="mb-2 flex items-start justify-between gap-2"><p className="break-all text-sm font-medium">{doc.filename}</p><Badge tone={statusTone(doc.status)}>{statusLabel(doc.status)}</Badge></div><p className="text-xs text-slate-500 dark:text-slate-400">{kindLabel(doc.kind)}</p><div className="mt-2 flex flex-wrap gap-2"><Badge tone={visibilityTone(doc.visibility)}>{visibilityLabel(doc.visibility)}</Badge></div>{doc.error_message && <p className="mt-2 text-xs text-red-600 dark:text-red-200">{doc.error_message}</p>}</div>)}</div>
         </Card>
 
         <Card className="flex min-h-0 flex-col overflow-hidden">

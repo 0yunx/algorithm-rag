@@ -39,6 +39,12 @@ class DocumentKind(str, Enum):
     markdown = "markdown"
 
 
+class DocumentVisibility(str, Enum):
+    private = "private"
+    shared = "shared"
+    system = "system"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -79,6 +85,7 @@ class Document(Base):
     filename: Mapped[str] = mapped_column(String(255))
     stored_path: Mapped[str] = mapped_column(String(500))
     kind: Mapped[DocumentKind] = mapped_column(SqlEnum(DocumentKind))
+    visibility: Mapped[DocumentVisibility] = mapped_column(SqlEnum(DocumentVisibility), default=DocumentVisibility.private, index=True)
     status: Mapped[DocumentStatus] = mapped_column(SqlEnum(DocumentStatus), default=DocumentStatus.pending_approval)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
@@ -250,12 +257,31 @@ def _sqlite_lightweight_migrations() -> None:
         if "deleted_at" not in columns:
             connection.execute(text("ALTER TABLE users ADD COLUMN deleted_at DATETIME"))
 
+        document_columns = _sqlite_table_columns("documents") if "documents" in _sqlite_table_names() else set()
+        if "documents" in _sqlite_table_names() and "visibility" not in document_columns:
+            connection.execute(text("ALTER TABLE documents ADD COLUMN visibility VARCHAR(7) NOT NULL DEFAULT 'private'"))
+        if "documents" in _sqlite_table_names():
+            connection.execute(
+                text(
+                    """
+                    UPDATE documents
+                    SET visibility = CASE
+                        WHEN stored_path = 'sqlite://algorithm_entries/default' THEN 'system'
+                        WHEN visibility = 'system' THEN 'system'
+                        WHEN uploaded_by IN (SELECT id FROM users WHERE role = 'admin') THEN 'shared'
+                        ELSE visibility
+                    END
+                    """
+                )
+            )
+
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_users_id ON users (id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_users_username ON users (username)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_algorithm_entries_id ON algorithm_entries (id)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_algorithm_entries_title ON algorithm_entries (title)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_algorithm_entries_category ON algorithm_entries (category)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_visibility ON documents (visibility)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversations_id ON conversations (id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversations_user_id ON conversations (user_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversations_created_at ON conversations (created_at)"))

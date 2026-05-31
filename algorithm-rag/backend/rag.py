@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from config import get_settings
-from database import ChatLog, Document, DocumentStatus, Prompt, User
+from database import ChatLog, Document, DocumentStatus, DocumentVisibility, Prompt, User, UserRole
 from prompts import DEFAULT_PROMPT
 from schemas import SourceOut
 from vector_store import search_ready_documents
@@ -99,6 +99,17 @@ def call_llm(question: str, context: str, prompt: str) -> str:
     return response.choices[0].message.content or "未能生成回答。"
 
 
+def visible_ready_document_ids(db: Session, user: User) -> list[int]:
+    query = db.query(Document.id).filter(Document.status == DocumentStatus.ready)
+    if user.role != UserRole.admin:
+        query = query.filter(
+            (Document.visibility == DocumentVisibility.system)
+            | (Document.visibility == DocumentVisibility.shared)
+            | ((Document.visibility == DocumentVisibility.private) & (Document.uploaded_by == user.id))
+        )
+    return [row.id for row in query.all()]
+
+
 def answer_question(db: Session, user: User, question: str) -> tuple[str, list[SourceOut], bool]:
     settings = get_settings()
     if len(question) > settings.max_chat_message_chars:
@@ -107,7 +118,7 @@ def answer_question(db: Session, user: User, question: str) -> tuple[str, list[S
             detail=f"消息长度不能超过 {settings.max_chat_message_chars} 个字符",
         )
 
-    ready_ids = [row.id for row in db.query(Document.id).filter(Document.status == DocumentStatus.ready).all()]
+    ready_ids = visible_ready_document_ids(db, user)
     if not ready_ids:
         answer = "当前算法知识库还没有可查询资料，请先让管理员上传或审核算法资料。"
         log = ChatLog(user_id=user.id, question=question, answer=answer, sources=[], blocked=True)

@@ -3,7 +3,7 @@ import argparse
 from sqlalchemy.orm import Session
 
 from auth import hash_password
-from database import AlgorithmEntry, Document, DocumentKind, DocumentStatus, Prompt, SessionLocal, User, UserRole, create_tables
+from database import AlgorithmEntry, Document, DocumentKind, DocumentStatus, DocumentVisibility, Prompt, SessionLocal, User, UserRole, create_tables
 from document_processor import Chunk, chunk_text
 from prompts import DEFAULT_PROMPT
 
@@ -263,6 +263,7 @@ def seed_algorithms() -> int:
                 filename=filename,
                 stored_path=stored_path,
                 kind=DocumentKind.markdown,
+                visibility=DocumentVisibility.system,
                 status=DocumentStatus.processing,
                 uploaded_by=admin.id,
                 approved_by=admin.id,
@@ -273,6 +274,7 @@ def seed_algorithms() -> int:
         else:
             document.filename = filename
             document.kind = DocumentKind.markdown
+            document.visibility = DocumentVisibility.system
             document.status = DocumentStatus.processing
             document.error_message = None
             document.uploaded_by = document.uploaded_by or admin.id

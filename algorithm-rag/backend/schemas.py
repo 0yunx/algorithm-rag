@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from database import DocumentKind, DocumentStatus, RegistrationStatus, UserRole
+from database import DocumentKind, DocumentStatus, DocumentVisibility, RegistrationStatus, UserRole
 
 
 class LoginRequest(BaseModel):
@@ -115,6 +115,7 @@ class DocumentOut(BaseModel):
     id: int
     filename: str
     kind: DocumentKind
+    visibility: DocumentVisibility
     status: DocumentStatus
     error_message: str | None
     uploaded_by: int

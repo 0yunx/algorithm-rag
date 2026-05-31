@@ -32,8 +32,8 @@ export type DocumentItem = {
   id: number;
   filename: string;
   kind: DocumentKind;
-  visibility: DocumentVisibility;
   status: DocumentStatus;
+  visibility: DocumentVisibility;
   error_message: string | null;
   uploaded_by: number;
   approved_by: number | null;
@@ -53,8 +53,10 @@ export type ChatResponse = {
   answer: string;
   sources: Source[];
   blocked: boolean;
-  conversation_id: number;
-  title: string;
+  conversation_id?: number;
+  conversation_title?: string;
+  user_message_id?: number;
+  assistant_message_id?: number;
 };
 
 export type ConversationMessage = {
@@ -68,9 +70,9 @@ export type ConversationMessage = {
 
 export type Conversation = {
   id: number;
-  user_id: number;
-  username: string | null;
   title: string;
+  user_id: number;
+  username?: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -86,11 +88,11 @@ export type ConversationSearchResult = {
   conversation_id: number;
   message_id: number;
   title: string;
-  user_id: number;
-  username: string | null;
-  role: 'user' | 'assistant';
   snippet: string;
+  role: 'user' | 'assistant';
   created_at: string;
+  user_id?: number;
+  username?: string | null;
 };
 
 export type Prompt = {
@@ -160,24 +162,21 @@ export const api = {
     request<{ id: number; status: RegistrationStatus; message: string }>('/register', { method: 'POST', body: JSON.stringify(payload) }),
   me: () => request<User>('/auth/me'),
   documents: () => request<DocumentItem[]>('/documents'),
-  upload(file: File, visibility: DocumentVisibility = 'private') {
+  upload(file: File, visibility?: DocumentVisibility) {
     const form = new FormData();
     form.append('file', file);
-    form.append('visibility', visibility);
+    if (visibility) form.append('visibility', visibility);
     return request<DocumentItem>('/documents/upload', { method: 'POST', body: form });
   },
   approve: (id: number) => request<DocumentItem>(`/documents/${id}/approve`, { method: 'POST' }),
   retry: (id: number) => request<DocumentItem>(`/documents/${id}/retry`, { method: 'POST' }),
-  chat: (message: string, conversationId?: number | null) => request<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify({ message, conversation_id: conversationId ?? null }) }),
+  chat: (message: string, conversationId?: number | null) =>
+    request<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify({ message, conversation_id: conversationId ?? null }) }),
   conversations: () => request<ConversationSummary[]>('/conversations'),
-  createConversation: () => request<Conversation>('/conversations', { method: 'POST' }),
+  createConversation: (title?: string) => request<Conversation>('/conversations', { method: 'POST', body: JSON.stringify({ title }) }),
   getConversation: (id: number) => request<Conversation>(`/conversations/${id}`),
   searchConversations: (query: string) => request<ConversationSearchResult[]>(`/conversations/search?q=${encodeURIComponent(query)}`),
-  deleteConversation: (id: number) => request<Conversation>(`/conversations/${id}/delete`, { method: 'POST' }),
-  adminConversations: () => request<ConversationSummary[]>('/admin/conversations'),
-  adminGetConversation: (id: number) => request<Conversation>(`/admin/conversations/${id}`),
-  adminSearchConversations: (query: string) => request<ConversationSearchResult[]>(`/admin/conversations/search?q=${encodeURIComponent(query)}`),
-  adminDeleteConversation: (id: number) => request<Conversation>(`/admin/conversations/${id}/delete`, { method: 'POST' }),
+  deleteConversation: (id: number) => request<{ ok: boolean }>(`/conversations/${id}`, { method: 'DELETE' }),
   users: () => request<User[]>('/admin/users'),
   createUser: (payload: { username: string; password: string; role: Role; email?: string }) =>
     request<User>('/admin/users', { method: 'POST', body: JSON.stringify(payload) }),
@@ -189,4 +188,8 @@ export const api = {
   getPrompt: () => request<Prompt>('/admin/prompts/active'),
   updatePrompt: (content: string) => request<Prompt>('/admin/prompts/active', { method: 'PUT', body: JSON.stringify({ content }) }),
   chatLogs: () => request<ChatLog[]>('/admin/chat-logs'),
+  adminConversations: () => request<ConversationSummary[]>('/admin/conversations'),
+  adminGetConversation: (id: number) => request<Conversation>(`/admin/conversations/${id}`),
+  adminSearchConversations: (query: string) => request<ConversationSearchResult[]>(`/admin/conversations/search?q=${encodeURIComponent(query)}`),
+  adminDeleteConversation: (id: number) => request<{ ok: boolean }>(`/admin/conversations/${id}`, { method: 'DELETE' }),
 };

@@ -40,82 +40,114 @@ body {
   box-sizing: border-box;
 }
 
-.markdown-body > :first-child {
+.chat-markdown {
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  overflow-wrap: anywhere;
+}
+
+.chat-markdown > :first-child {
   margin-top: 0;
 }
 
-.markdown-body > :last-child {
+.chat-markdown > :last-child {
   margin-bottom: 0;
 }
 
-.markdown-body p,
-.markdown-body ul,
-.markdown-body ol,
-.markdown-body pre,
-.markdown-body blockquote,
-.markdown-body table {
-  margin-bottom: 0.75rem;
+.chat-markdown p,
+.chat-markdown ul,
+.chat-markdown ol,
+.chat-markdown blockquote,
+.chat-markdown pre,
+.chat-markdown table {
+  margin: 0.75rem 0;
 }
 
-.markdown-body ul,
-.markdown-body ol {
+.chat-markdown ul,
+.chat-markdown ol {
   padding-left: 1.25rem;
 }
 
-.markdown-body ul {
+.chat-markdown ul {
   list-style: disc;
 }
 
-.markdown-body ol {
+.chat-markdown ol {
   list-style: decimal;
 }
 
-.markdown-body code {
+.chat-markdown code {
   border-radius: 0.375rem;
-  background: rgba(15, 23, 42, 0.08);
+  background: rgb(226 232 240 / 0.8);
   padding: 0.125rem 0.25rem;
-  font-size: 0.875em;
+  font-size: 0.8125rem;
 }
 
-.dark .markdown-body code {
-  background: rgba(226, 232, 240, 0.12);
+.dark .chat-markdown code {
+  background: rgb(15 23 42 / 0.9);
 }
 
-.markdown-body pre {
+.chat-markdown pre {
   overflow-x: auto;
   border-radius: 0.75rem;
-  background: rgba(15, 23, 42, 0.92);
+  background: rgb(15 23 42);
   padding: 0.75rem;
-  color: rgb(241, 245, 249);
+  color: rgb(226 232 240);
 }
 
-.markdown-body pre code {
+.chat-markdown pre code {
   background: transparent;
   padding: 0;
-}
-
-.markdown-body blockquote {
-  border-left: 3px solid rgb(125, 211, 252);
-  padding-left: 0.75rem;
   color: inherit;
-  opacity: 0.85;
 }
 
-.markdown-body table {
+.chat-markdown blockquote {
+  border-left: 3px solid rgb(14 165 233);
+  padding-left: 0.75rem;
+  color: rgb(71 85 105);
+}
+
+.dark .chat-markdown blockquote {
+  color: rgb(203 213 225);
+}
+
+.chat-markdown a {
+  color: rgb(3 105 161);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dark .chat-markdown a {
+  color: rgb(125 211 252);
+}
+
+.chat-markdown table {
   display: block;
   max-width: 100%;
   overflow-x: auto;
   border-collapse: collapse;
 }
 
-.markdown-body th,
-.markdown-body td {
-  border: 1px solid rgba(148, 163, 184, 0.45);
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid rgb(203 213 225);
   padding: 0.375rem 0.5rem;
 }
 
-.markdown-body .katex-display {
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 0.25rem 0;
+.dark .chat-markdown th,
+.dark .chat-markdown td {
+  border-color: rgb(51 65 85);
+}
+
+.chat-markdown-inverse code {
+  background: rgb(255 255 255 / 0.18);
+}
+
+.chat-markdown-inverse blockquote {
+  border-left-color: rgb(186 230 253);
+  color: rgb(224 242 254);
+}
+
+.chat-markdown-inverse a {
+  color: white;
 }

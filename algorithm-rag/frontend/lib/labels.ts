@@ -25,9 +25,9 @@ export function kindLabel(kind: string) {
 }
 
 export function visibilityTone(visibility: string): 'neutral' | 'green' | 'yellow' | 'red' | 'blue' {
-  if (visibility === 'system') return 'blue';
+  if (visibility === 'private') return 'blue';
   if (visibility === 'shared') return 'green';
-  if (visibility === 'private') return 'yellow';
+  if (visibility === 'system') return 'yellow';
   return 'neutral';
 }
 

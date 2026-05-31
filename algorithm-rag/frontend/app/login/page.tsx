@@ -21,7 +21,7 @@ export default function LoginPage() {
     try {
       const result = await api.login(username, password);
       setToken(result.access_token);
-      router.push(result.user.role === 'admin' ? '/admin' : '/chat');
+      router.push('/chat');
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败');
     } finally {

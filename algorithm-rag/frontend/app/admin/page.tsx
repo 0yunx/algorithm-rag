@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   AlertTriangle,
+  Eye,
   FileUp,
   KeyRound,
   LoaderCircle,
@@ -13,9 +14,11 @@ import {
   Upload,
   UserCheck,
   Users,
+  X,
 } from 'lucide-react';
-import { api, clearToken, type ChatLog, type Conversation, type ConversationSearchResult, type ConversationSummary, type DocumentItem, type Prompt, type RegistrationRequest, type Role, type Source, type User } from '@/lib/api';
-import { kindLabel, statusLabel, statusTone, visibilityLabel, visibilityTone } from '@/lib/labels';
+import { api, clearToken, type ChatLog, type Conversation, type ConversationSearchResult, type ConversationSummary, type DocumentDetail, type DocumentItem, type Prompt, type RegistrationRequest, type Role, type Source, type User } from '@/lib/api';
+import { kindLabel, statusLabel, statusTone } from '@/lib/labels';
+import { MarkdownView } from '@/components/markdown-view';
 import { Badge, Button, Card, DangerButton, Input, PasswordInput, SecondaryButton, Select, Textarea, ThemeToggle } from '@/components/ui';
 
 function formatDate(value: string | null) {
@@ -76,10 +79,12 @@ export default function AdminPage() {
   const [logs, setLogs] = useState<ChatLog[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
-  const [conversationSearch, setConversationSearch] = useState('');
   const [conversationResults, setConversationResults] = useState<ConversationSearchResult[]>([]);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [promptDraft, setPromptDraft] = useState('');
+  const [chatSearch, setChatSearch] = useState('');
+  const [selectedLogUserId, setSelectedLogUserId] = useState<number | null>(null);
+  const [documentDetail, setDocumentDetail] = useState<DocumentDetail | null>(null);
 
   const [loadingCore, setLoadingCore] = useState(true);
   const [loadingPrompt, setLoadingPrompt] = useState(true);
@@ -97,6 +102,7 @@ export default function AdminPage() {
   const [userActionId, setUserActionId] = useState<number | null>(null);
   const [creatingUser, setCreatingUser] = useState(false);
   const [savingPrompt, setSavingPrompt] = useState(false);
+  const [loadingDocumentId, setLoadingDocumentId] = useState<number | null>(null);
 
   const [newUser, setNewUser] = useState({ username: '', email: '', password: '', role: 'people' as Role });
 
@@ -106,7 +112,29 @@ export default function AdminPage() {
   const pendingCount = useMemo(() => documents.filter((item) => item.status === 'pending_approval').length, [documents]);
   const failedCount = useMemo(() => documents.filter((item) => item.status === 'failed').length, [documents]);
   const pendingRequests = useMemo(() => requests.filter((item) => item.status === 'pending'), [requests]);
-  const recentLogs = useMemo(() => logs.slice(0, 12), [logs]);
+  const filteredLogs = useMemo(() => {
+    const term = chatSearch.trim().toLowerCase();
+    return logs.filter((log) => {
+      const matchesSelectedUser = selectedLogUserId === null || log.user_id === selectedLogUserId;
+      if (!matchesSelectedUser) return false;
+      if (!term) return true;
+      return [log.username, log.email || '', log.question, log.answer]
+        .some((value) => value.toLowerCase().includes(term));
+    });
+  }, [chatSearch, logs, selectedLogUserId]);
+  const matchingLogUsers = useMemo(() => {
+    const term = chatSearch.trim().toLowerCase();
+    if (!term) return [];
+    const seen = new Set<number>();
+    return logs
+      .filter((log) => {
+        if (seen.has(log.user_id)) return false;
+        const matches = [log.username, log.email || ''].some((value) => value.toLowerCase().includes(term));
+        if (matches) seen.add(log.user_id);
+        return matches;
+      })
+      .slice(0, 8);
+  }, [chatSearch, logs]);
 
   const loadCore = useCallback(async (silent = false) => {
     if (silent) setRefreshingCore(true);
@@ -155,44 +183,11 @@ export default function AdminPage() {
     return () => window.clearInterval(timer);
   }, [loadCore, loadPrompt, ready, user]);
 
-  useEffect(() => {
-    const query = conversationSearch.trim();
-    if (!query) {
-      setConversationResults([]);
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      api.adminSearchConversations(query).then(setConversationResults).catch((error) => setPageError(error instanceof Error ? error.message : '搜索对话失败'));
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [conversationSearch]);
-
-  async function openConversation(id: number) {
-    setPageError('');
-    try {
-      setSelectedConversation(await api.adminGetConversation(id));
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : '打开对话失败');
-    }
-  }
-
-  async function deleteConversation(id: number) {
-    if (!window.confirm('确认软删除该对话？')) return;
-    setPageError('');
-    try {
-      await api.adminDeleteConversation(id);
-      if (selectedConversation?.id === id) setSelectedConversation(null);
-      await loadCore(true);
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : '删除对话失败');
-    }
-  }
-
   async function handleUpload(file: File) {
     setUploadError('');
     setUploading(true);
     try {
-      await api.upload(file, 'shared');
+      await api.upload(file);
       await loadCore(true);
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : '上传失败');
@@ -315,6 +310,53 @@ export default function AdminPage() {
     }
   }
 
+  async function viewDocument(documentId: number) {
+    setPageError('');
+    setLoadingDocumentId(documentId);
+    try {
+      setDocumentDetail(await api.document(documentId));
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '读取文档失败');
+    } finally {
+      setLoadingDocumentId(null);
+    }
+  }
+
+  async function selectLogUser(userId: number | null) {
+    setSelectedLogUserId(userId);
+    setSelectedConversation(null);
+    setPageError('');
+    try {
+      setConversations(await api.adminConversations({ userId }));
+      setConversationResults([]);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '加载用户会话失败');
+    }
+  }
+
+  async function searchConversationMessages() {
+    const query = chatSearch.trim();
+    if (!query) {
+      setConversationResults([]);
+      return;
+    }
+    setPageError('');
+    try {
+      setConversationResults(await api.adminSearchConversations(query, selectedLogUserId));
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '搜索会话失败');
+    }
+  }
+
+  async function openAdminConversation(conversationId: number) {
+    setPageError('');
+    try {
+      setSelectedConversation(await api.adminConversation(conversationId));
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '加载会话失败');
+    }
+  }
+
   if (!ready || !user) return null;
 
   return (
@@ -337,7 +379,6 @@ export default function AdminPage() {
                 <Badge tone="red">失败 {failedCount}</Badge>
                 <Badge tone="neutral">用户 {users.length}</Badge>
                 <Badge tone="neutral">聊天日志 {logs.length}</Badge>
-                <Badge tone="neutral">对话 {conversations.length}</Badge>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -379,8 +420,8 @@ export default function AdminPage() {
             <div className="max-h-[26rem] space-y-3 overflow-y-auto pr-1">
               {loadingCore && !documents.length ? <p className="text-sm text-slate-500 dark:text-slate-400">加载中...</p> : pendingDocuments.length ? pendingDocuments.map((document) => (
                 <div key={document.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
-                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-all text-sm font-medium">{document.filename}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{kindLabel(document.kind)} · 上传者 {usersById[document.uploaded_by] || `#${document.uploaded_by}`}</p><div className="mt-2 flex flex-wrap gap-2"><Badge tone={visibilityTone(document.visibility)}>{visibilityLabel(document.visibility)}</Badge></div></div><Badge tone={statusTone(document.status)}>{statusLabel(document.status)}</Badge></div>
-                  <div className="mt-3 flex gap-2"><Button className="text-xs" onClick={() => void approveDocument(document.id)} disabled={approvingId === document.id}>{approvingId === document.id ? <LoaderCircle size={14} className="animate-spin" /> : null}审核通过</Button></div>
+                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-all text-sm font-medium">{document.filename}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{kindLabel(document.kind)} · 上传者 {usersById[document.uploaded_by] || `#${document.uploaded_by}`}</p></div><Badge tone={statusTone(document.status)}>{statusLabel(document.status)}</Badge></div>
+                  <div className="mt-3 flex flex-wrap gap-2"><SecondaryButton className="text-xs" onClick={() => void viewDocument(document.id)} disabled={loadingDocumentId === document.id}>{loadingDocumentId === document.id ? <LoaderCircle size={14} className="animate-spin" /> : <Eye size={14} />}查看文档</SecondaryButton><Button className="text-xs" onClick={() => void approveDocument(document.id)} disabled={approvingId === document.id}>{approvingId === document.id ? <LoaderCircle size={14} className="animate-spin" /> : null}审核通过</Button></div>
                 </div>
               )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">当前没有待审核文档。</p>}
             </div>
@@ -392,9 +433,9 @@ export default function AdminPage() {
               {documents.length ? documents.map((document) => {
                 const canRetry = document.status === 'failed' || document.status === 'processing';
                 return <div key={document.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
-                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-all text-sm font-medium">{document.filename}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">#{document.id} · {kindLabel(document.kind)} · 上传者 {usersById[document.uploaded_by] || `#${document.uploaded_by}`}</p><div className="mt-2 flex flex-wrap gap-2"><Badge tone={visibilityTone(document.visibility)}>{visibilityLabel(document.visibility)}</Badge></div></div><Badge tone={statusTone(document.status)}>{statusLabel(document.status)}</Badge></div>
+                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-all text-sm font-medium">{document.filename}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">#{document.id} · {kindLabel(document.kind)} · 上传者 {usersById[document.uploaded_by] || `#${document.uploaded_by}`}</p></div><Badge tone={statusTone(document.status)}>{statusLabel(document.status)}</Badge></div>
                   <div className="mt-3 grid gap-1 text-xs text-slate-500 dark:text-slate-400"><p>创建：{formatDate(document.created_at)}</p><p>更新：{formatDate(document.updated_at)}</p><p>审核者：{document.approved_by ? usersById[document.approved_by] || `#${document.approved_by}` : '无'}</p>{document.error_message && <p className="rounded-xl border border-red-200 bg-red-50 p-2 text-red-700 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">错误：{document.error_message}</p>}</div>
-                  {canRetry && <div className="mt-3 flex gap-2"><SecondaryButton className="text-xs" onClick={() => void retryDocument(document.id)} disabled={retryingId === document.id}>{retryingId === document.id ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}重试索引</SecondaryButton></div>}
+                  <div className="mt-3 flex flex-wrap gap-2"><SecondaryButton className="text-xs" onClick={() => void viewDocument(document.id)} disabled={loadingDocumentId === document.id}>{loadingDocumentId === document.id ? <LoaderCircle size={14} className="animate-spin" /> : <Eye size={14} />}查看文档</SecondaryButton>{canRetry && <SecondaryButton className="text-xs" onClick={() => void retryDocument(document.id)} disabled={retryingId === document.id}>{retryingId === document.id ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}重试索引</SecondaryButton>}</div>
                 </div>;
               }) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无文档。</p>}
             </div>
@@ -420,23 +461,64 @@ export default function AdminPage() {
           </Card>
 
           <Card className="space-y-4 p-5 xl:col-span-3">
-            <div className="flex items-center gap-2"><MessagesSquare size={18} className="text-sky-600 dark:text-sky-200" /><div><h2 className="text-lg font-semibold">对话管理</h2><p className="text-xs text-slate-500 dark:text-slate-400">搜索、查看并软删除所有用户未删除的对话。</p></div></div>
-            <Input value={conversationSearch} onChange={(event) => setConversationSearch(event.target.value)} placeholder="搜索所有对话内容" />
-            {conversationResults.length ? <div className="grid gap-2 lg:grid-cols-2">{conversationResults.map((result) => <button key={`${result.conversation_id}-${result.message_id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-left text-sm hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950/50 dark:hover:bg-slate-900" onClick={() => void openConversation(result.conversation_id)}><span className="font-semibold">{result.title} · {result.username || `#${result.user_id}`}</span><span className="mt-1 line-clamp-2 block text-xs text-slate-500 dark:text-slate-400">{result.snippet}</span></button>)}</div> : null}
-            <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
-              <div className="max-h-[28rem] space-y-2 overflow-y-auto pr-1">{conversations.length ? conversations.map((conversation) => <div key={conversation.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50"><button className="block w-full text-left" onClick={() => void openConversation(conversation.id)}><p className="truncate text-sm font-medium">{conversation.title}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{conversation.username || `#${conversation.user_id}`} · {formatDate(conversation.updated_at)} · {conversation.message_count} 条</p><p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{conversation.last_message_preview || '暂无消息'}</p></button><DangerButton className="mt-3 text-xs" onClick={() => void deleteConversation(conversation.id)}><Trash2 size={14} />软删除</DangerButton></div>) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无对话。</p>}</div>
-              <div className="max-h-[28rem] space-y-3 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">{selectedConversation ? <><div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold">{selectedConversation.title}</h3><p className="text-xs text-slate-500 dark:text-slate-400">{selectedConversation.username || `#${selectedConversation.user_id}`} · {formatDate(selectedConversation.created_at)}</p></div><DangerButton className="text-xs" onClick={() => void deleteConversation(selectedConversation.id)}><Trash2 size={14} />软删除</DangerButton></div>{selectedConversation.messages.map((message) => <div key={message.id} className={message.role === 'user' ? 'ml-auto max-w-3xl rounded-2xl bg-sky-600 p-3 text-sm text-white' : 'mr-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900'}><p className="whitespace-pre-wrap">{message.content}</p>{message.sources.length ? <p className="mt-2 text-xs opacity-70">来源 {message.sources.length}</p> : null}</div>)}</> : <p className="text-sm text-slate-500 dark:text-slate-400">请选择一个对话查看详情。</p>}</div>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="flex items-center gap-2"><MessagesSquare size={18} className="text-sky-600 dark:text-sky-200" /><div><h2 className="text-lg font-semibold">聊天日志</h2><p className="text-xs text-slate-500 dark:text-slate-400">全局展示最近的问答、来源和拦截记录；可按用户名、邮箱、问题或回答搜索。已删除/停用用户会保留标记。</p></div></div>
+              <div className="min-w-0 lg:w-96">
+                <div className="flex gap-2">
+                  <Input value={chatSearch} onChange={(event) => setChatSearch(event.target.value)} placeholder="搜索用户名、邮箱、问题或回答" />
+                  <SecondaryButton className="shrink-0" onClick={() => void searchConversationMessages()}>搜索会话</SecondaryButton>
+                </div>
+                {selectedLogUserId !== null && <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-200"><span>正在查看用户：{logs.find((log) => log.user_id === selectedLogUserId)?.username || `#${selectedLogUserId}`}</span><button type="button" className="font-semibold underline underline-offset-2" onClick={() => void selectLogUser(null)}>返回全局</button></div>}
+              </div>
             </div>
-          </Card>
-
-          <Card className="space-y-4 p-5 xl:col-span-3">
-            <div className="flex items-center gap-2"><MessagesSquare size={18} className="text-sky-600 dark:text-sky-200" /><div><h2 className="text-lg font-semibold">聊天日志</h2><p className="text-xs text-slate-500 dark:text-slate-400">展示最近的问答、来源和拦截记录。已删除/停用用户会保留标记。</p></div></div>
+            {matchingLogUsers.length ? <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40"><p className="mb-2 text-xs text-slate-500 dark:text-slate-400">匹配用户，点击查看该用户的所有会话：</p><div className="flex flex-wrap gap-2">{matchingLogUsers.map((log) => <SecondaryButton key={log.user_id} className="text-xs" onClick={() => void selectLogUser(log.user_id)}>{log.username}{log.email ? ` · ${log.email}` : ''}</SecondaryButton>)}</div></div> : null}
+            <div className="flex flex-wrap gap-2 text-xs"><Badge tone="neutral">全局日志 {logs.length}</Badge><Badge tone="blue">当前显示 {filteredLogs.length}</Badge><Badge tone="neutral">会话 {conversations.length}</Badge>{selectedLogUserId !== null && <Badge tone="yellow">用户会话视图</Badge>}</div>
             <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-              {recentLogs.length ? recentLogs.map((log) => <div key={log.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-sm font-medium">{log.username}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{formatDate(log.created_at)}</p></div><div className="flex flex-wrap gap-2"><Badge tone={log.blocked ? 'red' : 'green'}>{log.blocked ? '已拦截' : '已回答'}</Badge><Badge tone="neutral">来源 {log.sources.length}</Badge></div></div><div className="mt-3 space-y-3 text-sm"><div><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">问题</p><p className="mt-1 whitespace-pre-wrap text-slate-800 dark:text-slate-100">{log.question}</p></div><div><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">回答</p><p className="mt-1 whitespace-pre-wrap text-slate-700 dark:text-slate-200">{log.answer}</p></div>{log.sources.length ? <div className="space-y-2"><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">检索来源</p>{log.sources.map((source: Source, index: number) => <div key={`${log.id}-${index}`} className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"><p className="font-semibold text-sky-700 dark:text-sky-200">{source.document_name} · {source.location}</p><p className="mt-1 line-clamp-2">{source.preview}</p></div>)}</div> : null}</div></div>) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无聊天日志。</p>}
+              {conversations.length ? conversations.map((conversation) => <button key={conversation.id} type="button" className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-sm shadow-sm hover:border-sky-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-400/40" onClick={() => void openAdminConversation(conversation.id)}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-semibold text-slate-800 dark:text-slate-100">{conversation.title}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{conversation.username || `#${conversation.user_id}`} · {formatDate(conversation.updated_at)}</p></div><Badge tone="neutral">{conversation.message_count} 条</Badge></div>{conversation.last_message_preview && <p className="mt-2 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{conversation.last_message_preview}</p>}</button>) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无会话。</p>}
+            </div>
+            {conversationResults.length ? <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40"><p className="mb-2 text-xs text-slate-500 dark:text-slate-400">会话消息搜索结果：</p><div className="grid gap-2 lg:grid-cols-2">{conversationResults.map((result) => <button key={`${result.conversation_id}-${result.message_id}`} type="button" className="rounded-xl border border-slate-200 bg-white p-3 text-left text-xs text-slate-600 hover:border-sky-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-sky-400/40" onClick={() => void openAdminConversation(result.conversation_id)}><span className="block font-semibold text-sky-700 dark:text-sky-200">{result.username || `#${result.user_id}`} · {result.title}</span><MarkdownView content={result.snippet} className="mt-1 line-clamp-2 text-xs" inline /></button>)}</div></div> : null}
+            <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+              {filteredLogs.length ? filteredLogs.map((log) => <div key={log.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-sm font-medium">{log.username}</p><p className="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">{log.email || '无邮箱'} · {formatDate(log.created_at)}</p></div><div className="flex flex-wrap gap-2"><Badge tone={log.blocked ? 'red' : 'green'}>{log.blocked ? '已拦截' : '已回答'}</Badge><Badge tone="neutral">来源 {log.sources.length}</Badge></div></div><div className="mt-3 space-y-3 text-sm"><div><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">问题</p><MarkdownView content={log.question} className="mt-1 text-slate-800 dark:text-slate-100" /></div><div><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">回答</p><MarkdownView content={log.answer} className="mt-1 text-slate-700 dark:text-slate-200" /></div>{log.sources.length ? <div className="space-y-2"><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">检索来源</p>{log.sources.map((source: Source, index: number) => <div key={`${log.id}-${index}`} className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"><p className="font-semibold text-sky-700 dark:text-sky-200">{source.document_name} · {source.location}</p><MarkdownView content={source.preview} className="mt-1 line-clamp-3 text-xs text-slate-600 dark:text-slate-300" inline /></div>)}</div> : null}</div></div>) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无匹配的聊天日志。</p>}
             </div>
           </Card>
         </div>
       </div>
+      {selectedConversation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+          <Card className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
+              <div className="min-w-0">
+                <h2 className="break-all text-lg font-bold">{selectedConversation.title}</h2>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{selectedConversation.username || `#${selectedConversation.user_id}`} · 创建 {formatDate(selectedConversation.created_at)} · 更新 {formatDate(selectedConversation.updated_at)}</p>
+              </div>
+              <DangerButton className="px-3" onClick={() => setSelectedConversation(null)} aria-label="关闭会话预览" title="关闭会话预览"><X size={16} /></DangerButton>
+            </div>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50/60 p-5 dark:bg-slate-950/40">
+              {selectedConversation.messages.map((message) => <div key={message.id} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><div className="mb-2 flex items-center gap-2"><Badge tone={message.role === 'user' ? 'blue' : message.blocked ? 'red' : 'green'}>{message.role === 'user' ? '用户' : message.blocked ? '助手（拦截）' : '助手'}</Badge><span className="text-xs text-slate-500 dark:text-slate-400">{formatDate(message.created_at)}</span></div><MarkdownView content={message.content} />{message.sources.length ? <div className="mt-3 space-y-2"><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">来源</p>{(message.sources as Source[]).map((source, index) => <div key={`${message.id}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-800 dark:bg-slate-950/50"><p className="font-semibold text-sky-700 dark:text-sky-200">{source.document_name} · {source.location}</p><MarkdownView content={source.preview} className="mt-1 line-clamp-3 text-xs" inline /></div>)}</div> : null}</div>)}
+            </div>
+          </Card>
+        </div>
+      )}
+      {documentDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+          <Card className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
+              <div className="min-w-0">
+                <h2 className="break-all text-lg font-bold">{documentDetail.filename}</h2>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">#{documentDetail.id} · {kindLabel(documentDetail.kind)} · {statusLabel(documentDetail.status)} · 上传者 {usersById[documentDetail.uploaded_by] || `#${documentDetail.uploaded_by}`}</p>
+              </div>
+              <DangerButton className="px-3" onClick={() => setDocumentDetail(null)} aria-label="关闭文档预览" title="关闭文档预览"><X size={16} /></DangerButton>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/60 p-5 dark:bg-slate-950/40">
+              {documentDetail.content.trim() ? (
+                <MarkdownView content={documentDetail.content} />
+              ) : (
+                <p className="text-sm text-slate-500 dark:text-slate-400">该文档没有可显示的文本内容。</p>
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
     </main>
   );
 }

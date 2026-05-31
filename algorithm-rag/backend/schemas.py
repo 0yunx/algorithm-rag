@@ -126,6 +126,10 @@ class DocumentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DocumentDetailOut(DocumentOut):
+    content: str
+
+
 class SourceOut(BaseModel):
     document_id: int
     document_name: str
@@ -210,7 +214,9 @@ class PromptUpdateRequest(BaseModel):
 
 class ChatLogOut(BaseModel):
     id: int
+    user_id: int
     username: str
+    email: str | None
     question: str
     answer: str
     sources: list[dict[str, Any]]

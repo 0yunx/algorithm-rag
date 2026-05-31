@@ -32,13 +32,17 @@ export type DocumentItem = {
   id: number;
   filename: string;
   kind: DocumentKind;
-  status: DocumentStatus;
   visibility: DocumentVisibility;
+  status: DocumentStatus;
   error_message: string | null;
   uploaded_by: number;
   approved_by: number | null;
   created_at: string;
   updated_at: string;
+};
+
+export type DocumentDetail = DocumentItem & {
+  content: string;
 };
 
 export type Source = {
@@ -53,26 +57,32 @@ export type ChatResponse = {
   answer: string;
   sources: Source[];
   blocked: boolean;
-  conversation_id?: number;
-  conversation_title?: string;
-  user_message_id?: number;
-  assistant_message_id?: number;
+  conversation_id: number;
+  title: string;
+};
+
+export type Prompt = {
+  id: number;
+  name: string;
+  content: string;
+  is_active: boolean;
+  updated_at: string;
 };
 
 export type ConversationMessage = {
   id: number;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | string;
   content: string;
-  sources: Source[];
+  sources: Source[] | Record<string, unknown>[];
   blocked: boolean;
   created_at: string;
 };
 
 export type Conversation = {
   id: number;
-  title: string;
   user_id: number;
-  username?: string | null;
+  username: string | null;
+  title: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -88,24 +98,18 @@ export type ConversationSearchResult = {
   conversation_id: number;
   message_id: number;
   title: string;
+  user_id: number;
+  username: string | null;
+  role: string;
   snippet: string;
-  role: 'user' | 'assistant';
   created_at: string;
-  user_id?: number;
-  username?: string | null;
-};
-
-export type Prompt = {
-  id: number;
-  name: string;
-  content: string;
-  is_active: boolean;
-  updated_at: string;
 };
 
 export type ChatLog = {
   id: number;
+  user_id: number;
   username: string;
+  email: string | null;
   question: string;
   answer: string;
   sources: Source[];
@@ -162,21 +166,15 @@ export const api = {
     request<{ id: number; status: RegistrationStatus; message: string }>('/register', { method: 'POST', body: JSON.stringify(payload) }),
   me: () => request<User>('/auth/me'),
   documents: () => request<DocumentItem[]>('/documents'),
-  upload(file: File, visibility?: DocumentVisibility) {
+  document: (id: number) => request<DocumentDetail>(`/documents/${id}`),
+  upload(file: File) {
     const form = new FormData();
     form.append('file', file);
-    if (visibility) form.append('visibility', visibility);
     return request<DocumentItem>('/documents/upload', { method: 'POST', body: form });
   },
   approve: (id: number) => request<DocumentItem>(`/documents/${id}/approve`, { method: 'POST' }),
   retry: (id: number) => request<DocumentItem>(`/documents/${id}/retry`, { method: 'POST' }),
-  chat: (message: string, conversationId?: number | null) =>
-    request<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify({ message, conversation_id: conversationId ?? null }) }),
-  conversations: () => request<ConversationSummary[]>('/conversations'),
-  createConversation: (title?: string) => request<Conversation>('/conversations', { method: 'POST', body: JSON.stringify({ title }) }),
-  getConversation: (id: number) => request<Conversation>(`/conversations/${id}`),
-  searchConversations: (query: string) => request<ConversationSearchResult[]>(`/conversations/search?q=${encodeURIComponent(query)}`),
-  deleteConversation: (id: number) => request<{ ok: boolean }>(`/conversations/${id}`, { method: 'DELETE' }),
+  chat: (message: string, conversationId?: number | null) => request<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify({ message, conversation_id: conversationId ?? null }) }),
   users: () => request<User[]>('/admin/users'),
   createUser: (payload: { username: string; password: string; role: Role; email?: string }) =>
     request<User>('/admin/users', { method: 'POST', body: JSON.stringify(payload) }),
@@ -188,8 +186,23 @@ export const api = {
   getPrompt: () => request<Prompt>('/admin/prompts/active'),
   updatePrompt: (content: string) => request<Prompt>('/admin/prompts/active', { method: 'PUT', body: JSON.stringify({ content }) }),
   chatLogs: () => request<ChatLog[]>('/admin/chat-logs'),
-  adminConversations: () => request<ConversationSummary[]>('/admin/conversations'),
-  adminGetConversation: (id: number) => request<Conversation>(`/admin/conversations/${id}`),
-  adminSearchConversations: (query: string) => request<ConversationSearchResult[]>(`/admin/conversations/search?q=${encodeURIComponent(query)}`),
-  adminDeleteConversation: (id: number) => request<{ ok: boolean }>(`/admin/conversations/${id}`, { method: 'DELETE' }),
+  conversations: () => request<ConversationSummary[]>('/conversations'),
+  createConversation: () => request<Conversation>('/conversations', { method: 'POST' }),
+  conversation: (id: number) => request<Conversation>(`/conversations/${id}`),
+  searchConversations: (q: string) => request<ConversationSearchResult[]>(`/conversations/search?q=${encodeURIComponent(q)}`),
+  deleteConversation: (id: number) => request<Conversation>(`/conversations/${id}/delete`, { method: 'POST' }),
+  adminConversations: (params: { q?: string; userId?: number | null } = {}) => {
+    const search = new URLSearchParams();
+    if (params.q?.trim()) search.set('q', params.q.trim());
+    if (params.userId != null) search.set('user_id', String(params.userId));
+    const suffix = search.toString() ? `?${search.toString()}` : '';
+    return request<ConversationSummary[]>(`/admin/conversations${suffix}`);
+  },
+  adminConversation: (id: number) => request<Conversation>(`/admin/conversations/${id}`),
+  adminSearchConversations: (q: string, userId?: number | null) => {
+    const search = new URLSearchParams({ q });
+    if (userId != null) search.set('user_id', String(userId));
+    return request<ConversationSearchResult[]>(`/admin/conversations/search?${search.toString()}`);
+  },
+  adminDeleteConversation: (id: number) => request<Conversation>(`/admin/conversations/${id}/delete`, { method: 'POST' }),
 };

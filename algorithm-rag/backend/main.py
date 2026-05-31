@@ -37,6 +37,7 @@ from schemas import (
     ConversationSearchResult,
     ConversationSummary,
     CreateUserRequest,
+    DocumentDetailOut,
     DocumentOut,
     LoginRequest,
     PromptOut,
@@ -221,6 +222,35 @@ def get_visible_document_or_404(db: Session, document_id: int, current_user: Use
     return document
 
 
+def document_markdown_content(document: Document) -> str:
+    if document.stored_path == ALGORITHM_KNOWLEDGE_DOCUMENT_PATH:
+        db = SessionLocal()
+        try:
+            entries = ensure_default_algorithm_entries(db)
+            return "\n\n".join(
+                [
+                    f"# {entry.title}\n\n"
+                    f"**分类：** {entry.category}\n\n"
+                    f"**难度：** {entry.difficulty}\n\n"
+                    f"**标签：** {entry.tags}\n\n"
+                    f"{entry.content.strip()}"
+                    for entry in entries
+                ]
+            )
+        finally:
+            db.close()
+    path = Path(document.stored_path)
+    if document.kind == DocumentKind.markdown:
+        try:
+            return path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return path.read_text(encoding="utf-8", errors="replace")
+    chunks = extract_chunks(document.stored_path, document.filename)
+    if not chunks:
+        return ""
+    return "\n\n".join(f"## {chunk.location}\n\n{chunk.text}" for chunk in chunks)
+
+
 def index_document(document_id: int) -> None:
     db = SessionLocal()
     try:
@@ -294,6 +324,19 @@ def list_documents(current_user: User = Depends(get_current_user), db: Session =
     return [DocumentOut.model_validate(document) for document in query.all()]
 
 
+@app.get("/documents/{document_id}", response_model=DocumentDetailOut)
+def get_document(document_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> DocumentDetailOut:
+    document = get_visible_document_or_404(db, document_id, current_user)
+    try:
+        content = document_markdown_content(document)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="文档文件不存在") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"读取文档失败：{exc}") from exc
+    data = DocumentOut.model_validate(document).model_dump()
+    return DocumentDetailOut(**data, content=content)
+
+
 @app.post("/documents/upload", response_model=DocumentOut)
 def upload_document(
     background_tasks: BackgroundTasks,
@@ -355,11 +398,6 @@ def legacy_upload_document(
     db: Session = Depends(get_db),
 ) -> DocumentOut:
     return upload_document(background_tasks=background_tasks, file=file, visibility=visibility, current_user=current_user, db=db)
-
-
-@app.get("/documents/{document_id}", response_model=DocumentOut)
-def get_document(document_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> DocumentOut:
-    return DocumentOut.model_validate(get_visible_document_or_404(db, document_id, current_user))
 
 
 @app.post("/documents/{document_id}/approve", response_model=DocumentOut)
@@ -536,8 +574,19 @@ def delete_conversation(conversation_id: int, current_user: User = Depends(get_c
 
 
 @app.get("/admin/conversations", response_model=list[ConversationSummary])
-def admin_list_conversations(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[ConversationSummary]:
-    conversations = db.query(Conversation).filter(Conversation.deleted_at.is_(None)).order_by(Conversation.updated_at.desc(), Conversation.id.desc()).limit(300).all()
+def admin_list_conversations(
+    q: str | None = None,
+    user_id: int | None = None,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[ConversationSummary]:
+    query = db.query(Conversation).join(User).filter(Conversation.deleted_at.is_(None))
+    if user_id is not None:
+        query = query.filter(Conversation.user_id == user_id)
+    if q and q.strip():
+        pattern = f"%{q.strip()}%"
+        query = query.filter(or_(Conversation.title.ilike(pattern), User.username.ilike(pattern), User.email.ilike(pattern)))
+    conversations = query.order_by(Conversation.updated_at.desc(), Conversation.id.desc()).limit(300).all()
     result: list[ConversationSummary] = []
     for conversation in conversations:
         count = db.query(func.count(ConversationMessage.id)).filter(ConversationMessage.conversation_id == conversation.id).scalar() or 0
@@ -552,22 +601,33 @@ def admin_list_conversations(_: User = Depends(require_admin), db: Session = Dep
 
 
 @app.get("/admin/conversations/search", response_model=list[ConversationSearchResult])
-def admin_search_conversations(q: str, _: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[ConversationSearchResult]:
+def admin_search_conversations(
+    q: str,
+    user_id: int | None = None,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[ConversationSearchResult]:
     query = q.strip()
     if not query:
         return []
     pattern = f"%{query}%"
-    rows = (
+    rows_query = (
         db.query(Conversation, ConversationMessage)
+        .join(User, User.id == Conversation.user_id)
         .join(ConversationMessage, ConversationMessage.conversation_id == Conversation.id)
         .filter(
             Conversation.deleted_at.is_(None),
-            or_(Conversation.title.ilike(pattern), ConversationMessage.content.ilike(pattern)),
+            or_(
+                Conversation.title.ilike(pattern),
+                ConversationMessage.content.ilike(pattern),
+                User.username.ilike(pattern),
+                User.email.ilike(pattern),
+            ),
         )
-        .order_by(Conversation.updated_at.desc(), ConversationMessage.created_at.asc())
-        .limit(100)
-        .all()
     )
+    if user_id is not None:
+        rows_query = rows_query.filter(Conversation.user_id == user_id)
+    rows = rows_query.order_by(Conversation.updated_at.desc(), ConversationMessage.created_at.asc()).limit(100).all()
     return [
         ConversationSearchResult(
             conversation_id=conversation.id,
@@ -745,7 +805,9 @@ def chat_logs(_: User = Depends(require_admin), db: Session = Depends(get_db)) -
     return [
         ChatLogOut(
             id=log.id,
+            user_id=log.user_id,
             username=display_username(log.user),
+            email=log.user.email if log.user else None,
             question=log.question,
             answer=log.answer,
             sources=log.sources or [],

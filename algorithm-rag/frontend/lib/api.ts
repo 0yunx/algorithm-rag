@@ -5,6 +5,7 @@ export type DocumentStatus = 'pending_approval' | 'processing' | 'ready' | 'fail
 export type DocumentKind = 'pdf' | 'markdown';
 export type DocumentVisibility = 'private' | 'shared' | 'system';
 export type RegistrationStatus = 'pending' | 'approved' | 'rejected';
+export type ConversationStatus = 'active' | 'deleted';
 
 export type User = {
   id: number;
@@ -82,6 +83,7 @@ export type Conversation = {
   id: number;
   user_id: number;
   username: string | null;
+  email: string | null;
   title: string;
   created_at: string;
   updated_at: string;
@@ -191,18 +193,28 @@ export const api = {
   conversation: (id: number) => request<Conversation>(`/conversations/${id}`),
   searchConversations: (q: string) => request<ConversationSearchResult[]>(`/conversations/search?q=${encodeURIComponent(q)}`),
   deleteConversation: (id: number) => request<Conversation>(`/conversations/${id}/delete`, { method: 'POST' }),
-  adminConversations: (params: { q?: string; userId?: number | null } = {}) => {
+  adminConversations: (params: { q?: string; userId?: number | null; userIds?: number[]; status?: ConversationStatus } = {}) => {
     const search = new URLSearchParams();
     if (params.q?.trim()) search.set('q', params.q.trim());
-    if (params.userId != null) search.set('user_id', String(params.userId));
+    if (params.status) search.set('status', params.status);
+    if (params.userIds?.length) search.set('user_ids', params.userIds.join(','));
+    else if (params.userId != null) search.set('user_id', String(params.userId));
     const suffix = search.toString() ? `?${search.toString()}` : '';
     return request<ConversationSummary[]>(`/admin/conversations${suffix}`);
   },
   adminConversation: (id: number) => request<Conversation>(`/admin/conversations/${id}`),
-  adminSearchConversations: (q: string, userId?: number | null) => {
+  adminSearchConversations: (q: string, params: { userId?: number | null; userIds?: number[]; status?: ConversationStatus } = {}) => {
     const search = new URLSearchParams({ q });
-    if (userId != null) search.set('user_id', String(userId));
+    if (params.status) search.set('status', params.status);
+    if (params.userIds?.length) search.set('user_ids', params.userIds.join(','));
+    else if (params.userId != null) search.set('user_id', String(params.userId));
     return request<ConversationSearchResult[]>(`/admin/conversations/search?${search.toString()}`);
   },
+  adminSearchUsers: (q: string, role?: Role) => {
+    const search = new URLSearchParams({ q });
+    if (role) search.set('role', role);
+    return request<User[]>(`/admin/users/search?${search.toString()}`);
+  },
   adminDeleteConversation: (id: number) => request<Conversation>(`/admin/conversations/${id}/delete`, { method: 'POST' }),
+  adminRestoreConversation: (id: number) => request<Conversation>(`/admin/conversations/${id}/restore`, { method: 'POST' }),
 };

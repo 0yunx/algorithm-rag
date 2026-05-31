@@ -16,7 +16,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { api, clearToken, type ChatLog, type Conversation, type ConversationSearchResult, type ConversationSummary, type DocumentDetail, type DocumentItem, type Prompt, type RegistrationRequest, type Role, type Source, type User } from '@/lib/api';
+import { api, clearToken, type ChatLog, type ConversationStatus, type ConversationSummary, type DocumentDetail, type DocumentItem, type Prompt, type RegistrationRequest, type Role, type Source, type User } from '@/lib/api';
 import { kindLabel, statusLabel, statusTone } from '@/lib/labels';
 import { MarkdownView } from '@/components/markdown-view';
 import { Badge, Button, Card, DangerButton, Input, PasswordInput, SecondaryButton, Select, Textarea, ThemeToggle } from '@/components/ui';
@@ -78,11 +78,17 @@ export default function AdminPage() {
   const [requests, setRequests] = useState<RegistrationRequest[]>([]);
   const [logs, setLogs] = useState<ChatLog[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
-  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
-  const [conversationResults, setConversationResults] = useState<ConversationSearchResult[]>([]);
+  const [conversationStatus, setConversationStatus] = useState<ConversationStatus>('active');
+  const [showConversationReview, setShowConversationReview] = useState(false);
+  const [userSearch, setUserSearch] = useState('');
+  const [userSearchResults, setUserSearchResults] = useState<User[]>([]);
+  const [selectedConversationUsers, setSelectedConversationUsers] = useState<User[]>([]);
+  const [searchingUsers, setSearchingUsers] = useState(false);
+  const [loadingConversations, setLoadingConversations] = useState(false);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [promptDraft, setPromptDraft] = useState('');
   const [chatSearch, setChatSearch] = useState('');
+  const [showChatLogs, setShowChatLogs] = useState(false);
   const [selectedLogUserId, setSelectedLogUserId] = useState<number | null>(null);
   const [documentDetail, setDocumentDetail] = useState<DocumentDetail | null>(null);
 
@@ -141,12 +147,11 @@ export default function AdminPage() {
     else setLoadingCore(true);
     setPageError('');
     try {
-      const [docs, userList, registrationRequests, chatLogs, conversationList] = await Promise.all([api.documents(), api.users(), api.registrationRequests(), api.chatLogs(), api.adminConversations()]);
+      const [docs, userList, registrationRequests, chatLogs] = await Promise.all([api.documents(), api.users(), api.registrationRequests(), api.chatLogs()]);
       setDocuments(docs);
       setUsers(userList);
       setRequests(registrationRequests);
       setLogs(chatLogs);
-      setConversations(conversationList);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '加载管理数据失败');
     } finally {
@@ -322,39 +327,65 @@ export default function AdminPage() {
     }
   }
 
-  async function selectLogUser(userId: number | null) {
-    setSelectedLogUserId(userId);
-    setSelectedConversation(null);
+  async function loadAdminConversations(nextStatus = conversationStatus, nextUsers = selectedConversationUsers) {
     setPageError('');
+    setLoadingConversations(true);
     try {
-      setConversations(await api.adminConversations({ userId }));
-      setConversationResults([]);
+      const userIds = nextUsers.map((item) => item.id);
+      setConversations(await api.adminConversations({ status: nextStatus, userIds: userIds.length ? userIds : undefined }));
     } catch (error) {
-      setPageError(error instanceof Error ? error.message : '加载用户会话失败');
+      setPageError(error instanceof Error ? error.message : '加载会话失败');
+    } finally {
+      setLoadingConversations(false);
     }
   }
 
-  async function searchConversationMessages() {
-    const query = chatSearch.trim();
+  async function showGlobalConversations() {
+    setConversationStatus('active');
+    setSelectedConversationUsers([]);
+    setUserSearchResults([]);
+    setShowConversationReview(true);
+    await loadAdminConversations('active', []);
+  }
+
+  async function setConversationCategory(status: ConversationStatus) {
+    setConversationStatus(status);
+    setShowConversationReview(true);
+    await loadAdminConversations(status, selectedConversationUsers);
+  }
+
+  async function showDeletedConversations() {
+    await setConversationCategory('deleted');
+  }
+
+  async function searchPeopleUsers() {
+    const query = userSearch.trim();
     if (!query) {
-      setConversationResults([]);
+      setUserSearchResults([]);
       return;
     }
     setPageError('');
+    setSearchingUsers(true);
     try {
-      setConversationResults(await api.adminSearchConversations(query, selectedLogUserId));
+      setUserSearchResults(await api.adminSearchUsers(query, 'people'));
     } catch (error) {
-      setPageError(error instanceof Error ? error.message : '搜索会话失败');
+      setPageError(error instanceof Error ? error.message : '搜索用户失败');
+    } finally {
+      setSearchingUsers(false);
     }
   }
 
-  async function openAdminConversation(conversationId: number) {
-    setPageError('');
-    try {
-      setSelectedConversation(await api.adminConversation(conversationId));
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : '加载会话失败');
-    }
+  async function selectConversationUser(item: User) {
+    const nextUsers = selectedConversationUsers.some((selected) => selected.id === item.id) ? selectedConversationUsers : [...selectedConversationUsers, item];
+    setSelectedConversationUsers(nextUsers);
+    setShowConversationReview(true);
+    await loadAdminConversations(conversationStatus, nextUsers);
+  }
+
+  async function removeConversationUser(userId: number) {
+    const nextUsers = selectedConversationUsers.filter((item) => item.id !== userId);
+    setSelectedConversationUsers(nextUsers);
+    await loadAdminConversations(conversationStatus, nextUsers);
   }
 
   if (!ready || !user) return null;
@@ -462,43 +493,62 @@ export default function AdminPage() {
 
           <Card className="space-y-4 p-5 xl:col-span-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="flex items-center gap-2"><MessagesSquare size={18} className="text-sky-600 dark:text-sky-200" /><div><h2 className="text-lg font-semibold">聊天日志</h2><p className="text-xs text-slate-500 dark:text-slate-400">全局展示最近的问答、来源和拦截记录；可按用户名、邮箱、问题或回答搜索。已删除/停用用户会保留标记。</p></div></div>
-              <div className="min-w-0 lg:w-96">
-                <div className="flex gap-2">
-                  <Input value={chatSearch} onChange={(event) => setChatSearch(event.target.value)} placeholder="搜索用户名、邮箱、问题或回答" />
-                  <SecondaryButton className="shrink-0" onClick={() => void searchConversationMessages()}>搜索会话</SecondaryButton>
-                </div>
-                {selectedLogUserId !== null && <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-200"><span>正在查看用户：{logs.find((log) => log.user_id === selectedLogUserId)?.username || `#${selectedLogUserId}`}</span><button type="button" className="font-semibold underline underline-offset-2" onClick={() => void selectLogUser(null)}>返回全局</button></div>}
+              <div className="flex items-center gap-2"><MessagesSquare size={18} className="text-sky-600 dark:text-sky-200" /><div><h2 className="text-lg font-semibold">会话审查</h2><p className="text-xs text-slate-500 dark:text-slate-400">默认折叠，不直接展示完整聊天内容；打开摘要卡片后可进入详情页查看和隐藏/恢复。</p></div></div>
+              <div className="flex flex-wrap gap-2">
+                <SecondaryButton onClick={() => {
+                  if (!showConversationReview && !conversations.length) void loadAdminConversations();
+                  setShowConversationReview((current) => !current);
+                }}>{showConversationReview ? '收起会话审查' : '展开会话审查'}</SecondaryButton>
+                <SecondaryButton onClick={() => void showGlobalConversations()}>查看全局对话</SecondaryButton>
+                <SecondaryButton onClick={() => void showDeletedConversations()}>已隐藏 / 已软删除</SecondaryButton>
               </div>
             </div>
-            {matchingLogUsers.length ? <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40"><p className="mb-2 text-xs text-slate-500 dark:text-slate-400">匹配用户，点击查看该用户的所有会话：</p><div className="flex flex-wrap gap-2">{matchingLogUsers.map((log) => <SecondaryButton key={log.user_id} className="text-xs" onClick={() => void selectLogUser(log.user_id)}>{log.username}{log.email ? ` · ${log.email}` : ''}</SecondaryButton>)}</div></div> : null}
-            <div className="flex flex-wrap gap-2 text-xs"><Badge tone="neutral">全局日志 {logs.length}</Badge><Badge tone="blue">当前显示 {filteredLogs.length}</Badge><Badge tone="neutral">会话 {conversations.length}</Badge>{selectedLogUserId !== null && <Badge tone="yellow">用户会话视图</Badge>}</div>
-            <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-              {conversations.length ? conversations.map((conversation) => <button key={conversation.id} type="button" className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-sm shadow-sm hover:border-sky-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-400/40" onClick={() => void openAdminConversation(conversation.id)}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-semibold text-slate-800 dark:text-slate-100">{conversation.title}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{conversation.username || `#${conversation.user_id}`} · {formatDate(conversation.updated_at)}</p></div><Badge tone="neutral">{conversation.message_count} 条</Badge></div>{conversation.last_message_preview && <p className="mt-2 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{conversation.last_message_preview}</p>}</button>) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无会话。</p>}
+            {showConversationReview ? <>
+              <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto] lg:items-center">
+                <Input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="搜索用户" onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void searchPeopleUsers(); } }} />
+                <SecondaryButton onClick={() => void searchPeopleUsers()} disabled={searchingUsers}>{searchingUsers ? <LoaderCircle size={16} className="animate-spin" /> : null}搜索用户</SecondaryButton>
+                <SecondaryButton onClick={() => void loadAdminConversations()} disabled={loadingConversations}>{loadingConversations ? <LoaderCircle size={16} className="animate-spin" /> : null}刷新摘要</SecondaryButton>
+              </div>
+              {selectedConversationUsers.length ? <div className="flex flex-wrap gap-2">{selectedConversationUsers.map((item) => <span key={item.id} className="inline-flex max-w-full items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-200"><span className="truncate">{item.username}{item.email ? ` · ${item.email}` : ''}</span><button type="button" className="text-sm font-bold" aria-label={`移除 ${item.username} 筛选`} onClick={() => void removeConversationUser(item.id)}>×</button></span>)}</div> : null}
+              {userSearchResults.length ? <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40"><p className="mb-2 text-xs text-slate-500 dark:text-slate-400">搜索结果，点击添加为筛选用户：</p><div className="flex flex-wrap gap-2">{userSearchResults.map((item) => <SecondaryButton key={item.id} className="text-xs" onClick={() => void selectConversationUser(item)} disabled={selectedConversationUsers.some((selected) => selected.id === item.id)}>{item.username}{item.email ? ` · ${item.email}` : ''}</SecondaryButton>)}</div></div> : null}
+              <div className="flex flex-wrap gap-2 text-xs"><Badge tone={conversationStatus === 'active' ? 'green' : 'red'}>{conversationStatus === 'active' ? '已隐藏：否' : '已软删除/已隐藏'}</Badge><Badge tone="neutral">摘要 {conversations.length}</Badge>{selectedConversationUsers.length ? <Badge tone="yellow">用户筛选优先</Badge> : <Badge tone="blue">全局视图</Badge>}</div>
+              <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+                {loadingConversations && !conversations.length ? <p className="text-sm text-slate-500 dark:text-slate-400">加载中...</p> : conversations.length ? conversations.map((conversation) => (
+                  <button key={conversation.id} type="button" className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-sm shadow-sm hover:border-sky-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-400/40" onClick={() => { window.location.href = `/admin/conversations/${conversation.id}`; }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-slate-800 dark:text-slate-100">{conversation.title}</p>
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{conversation.username || `#${conversation.user_id}`}{conversation.email ? ` · ${conversation.email}` : ''}</p>
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">更新 {formatDate(conversation.updated_at)}</p>
+                      </div>
+                      <Badge tone="neutral">{conversation.message_count} 条</Badge>
+                    </div>
+                    {conversation.last_message_preview && <p className="mt-2 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">最近消息摘要：{conversation.last_message_preview}</p>}
+                  </button>
+                )) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无会话摘要。</p>}
+              </div>
+            </> : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">会话审查已隐藏。点击“查看全局对话”或“展开会话审查”后仅加载摘要卡片。</p>}
+          </Card>
+
+          <Card className="space-y-4 p-5 xl:col-span-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="flex items-center gap-2"><MessagesSquare size={18} className="text-sky-600 dark:text-sky-200" /><div><h2 className="text-lg font-semibold">聊天日志</h2><p className="text-xs text-slate-500 dark:text-slate-400">默认隐藏完整问答；展开后可按用户名、邮箱、问题或回答搜索旧日志。已删除/停用用户会保留标记。</p></div></div>
+              <div className="flex flex-col gap-2 lg:w-96">
+                <SecondaryButton onClick={() => setShowChatLogs((current) => !current)}>{showChatLogs ? '收起聊天日志' : '展开聊天日志'}</SecondaryButton>
+                {showChatLogs ? <Input value={chatSearch} onChange={(event) => setChatSearch(event.target.value)} placeholder="搜索用户名、邮箱、问题或回答" /> : null}
+              </div>
             </div>
-            {conversationResults.length ? <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40"><p className="mb-2 text-xs text-slate-500 dark:text-slate-400">会话消息搜索结果：</p><div className="grid gap-2 lg:grid-cols-2">{conversationResults.map((result) => <button key={`${result.conversation_id}-${result.message_id}`} type="button" className="rounded-xl border border-slate-200 bg-white p-3 text-left text-xs text-slate-600 hover:border-sky-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-sky-400/40" onClick={() => void openAdminConversation(result.conversation_id)}><span className="block font-semibold text-sky-700 dark:text-sky-200">{result.username || `#${result.user_id}`} · {result.title}</span><MarkdownView content={result.snippet} className="mt-1 line-clamp-2 text-xs" inline /></button>)}</div></div> : null}
-            <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-              {filteredLogs.length ? filteredLogs.map((log) => <div key={log.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-sm font-medium">{log.username}</p><p className="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">{log.email || '无邮箱'} · {formatDate(log.created_at)}</p></div><div className="flex flex-wrap gap-2"><Badge tone={log.blocked ? 'red' : 'green'}>{log.blocked ? '已拦截' : '已回答'}</Badge><Badge tone="neutral">来源 {log.sources.length}</Badge></div></div><div className="mt-3 space-y-3 text-sm"><div><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">问题</p><MarkdownView content={log.question} className="mt-1 text-slate-800 dark:text-slate-100" /></div><div><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">回答</p><MarkdownView content={log.answer} className="mt-1 text-slate-700 dark:text-slate-200" /></div>{log.sources.length ? <div className="space-y-2"><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">检索来源</p>{log.sources.map((source: Source, index: number) => <div key={`${log.id}-${index}`} className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"><p className="font-semibold text-sky-700 dark:text-sky-200">{source.document_name} · {source.location}</p><MarkdownView content={source.preview} className="mt-1 line-clamp-3 text-xs text-slate-600 dark:text-slate-300" inline /></div>)}</div> : null}</div></div>) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无匹配的聊天日志。</p>}
-            </div>
+            {showChatLogs ? <>
+              {matchingLogUsers.length ? <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40"><p className="mb-2 text-xs text-slate-500 dark:text-slate-400">匹配日志用户，点击筛选旧聊天日志：</p><div className="flex flex-wrap gap-2">{matchingLogUsers.map((log) => <SecondaryButton key={log.user_id} className="text-xs" onClick={() => setSelectedLogUserId(log.user_id)}>{log.username}{log.email ? ` · ${log.email}` : ''}</SecondaryButton>)}</div></div> : null}
+              {selectedLogUserId !== null && <div className="flex items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-200"><span>正在筛选日志用户：{logs.find((log) => log.user_id === selectedLogUserId)?.username || `#${selectedLogUserId}`}</span><button type="button" className="font-semibold underline underline-offset-2" onClick={() => setSelectedLogUserId(null)}>返回全局日志</button></div>}
+              <div className="flex flex-wrap gap-2 text-xs"><Badge tone="neutral">全局日志 {logs.length}</Badge><Badge tone="blue">当前显示 {filteredLogs.length}</Badge>{selectedLogUserId !== null && <Badge tone="yellow">用户日志视图</Badge>}</div>
+              <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+                {filteredLogs.length ? filteredLogs.map((log) => <div key={log.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-sm font-medium">{log.username}</p><p className="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">{log.email || '无邮箱'} · {formatDate(log.created_at)}</p></div><div className="flex flex-wrap gap-2"><Badge tone={log.blocked ? 'red' : 'green'}>{log.blocked ? '已拦截' : '已回答'}</Badge><Badge tone="neutral">来源 {log.sources.length}</Badge></div></div><div className="mt-3 space-y-3 text-sm"><div><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">问题</p><MarkdownView content={log.question} className="mt-1 text-slate-800 dark:text-slate-100" /></div><div><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">回答</p><MarkdownView content={log.answer} className="mt-1 text-slate-700 dark:text-slate-200" /></div>{log.sources.length ? <div className="space-y-2"><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">检索来源</p>{log.sources.map((source: Source, index: number) => <div key={`${log.id}-${index}`} className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"><p className="font-semibold text-sky-700 dark:text-sky-200">{source.document_name} · {source.location}</p><MarkdownView content={source.preview} className="mt-1 line-clamp-3 text-xs text-slate-600 dark:text-slate-300" inline /></div>)}</div> : null}</div></div>) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无匹配的聊天日志。</p>}
+              </div>
+            </> : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">聊天日志已隐藏，避免默认展示完整问答内容。</p>}
           </Card>
         </div>
       </div>
-      {selectedConversation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-          <Card className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
-              <div className="min-w-0">
-                <h2 className="break-all text-lg font-bold">{selectedConversation.title}</h2>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{selectedConversation.username || `#${selectedConversation.user_id}`} · 创建 {formatDate(selectedConversation.created_at)} · 更新 {formatDate(selectedConversation.updated_at)}</p>
-              </div>
-              <DangerButton className="px-3" onClick={() => setSelectedConversation(null)} aria-label="关闭会话预览" title="关闭会话预览"><X size={16} /></DangerButton>
-            </div>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50/60 p-5 dark:bg-slate-950/40">
-              {selectedConversation.messages.map((message) => <div key={message.id} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><div className="mb-2 flex items-center gap-2"><Badge tone={message.role === 'user' ? 'blue' : message.blocked ? 'red' : 'green'}>{message.role === 'user' ? '用户' : message.blocked ? '助手（拦截）' : '助手'}</Badge><span className="text-xs text-slate-500 dark:text-slate-400">{formatDate(message.created_at)}</span></div><MarkdownView content={message.content} />{message.sources.length ? <div className="mt-3 space-y-2"><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">来源</p>{(message.sources as Source[]).map((source, index) => <div key={`${message.id}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-800 dark:bg-slate-950/50"><p className="font-semibold text-sky-700 dark:text-sky-200">{source.document_name} · {source.location}</p><MarkdownView content={source.preview} className="mt-1 line-clamp-3 text-xs" inline /></div>)}</div> : null}</div>)}
-            </div>
-          </Card>
-        </div>
-      )}
       {documentDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
           <Card className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">

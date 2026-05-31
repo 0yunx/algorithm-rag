@@ -28,7 +28,7 @@ export default function ChatPage() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
-  const [messages, setMessages] = useState<Message[]>([{ role: 'assistant', content: '你好，我是算法 RAG 助手。请上传或等待管理员审核算法资料后提问。' }]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -109,7 +109,7 @@ export default function ChatPage() {
 
   function startNewConversation() {
     setActiveConversationId(null);
-    setMessages([{ role: 'assistant', content: '你好，我是算法 RAG 助手。请上传或等待管理员审核算法资料后提问。' }]);
+    setMessages([]);
   }
 
   async function viewDocument(documentId: number) {
@@ -186,7 +186,7 @@ export default function ChatPage() {
             <p className="text-sm text-slate-500 dark:text-slate-400">只回答算法、数据结构、复杂度和刷题方法相关问题。当前用户：{user.username}</p>
           </div>
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50/60 p-4 dark:bg-slate-950/40">
-            {messages.map((message, index) => (
+            {messages.length ? messages.map((message, index) => (
               <div key={index} className={message.role === 'user' ? 'ml-auto max-w-3xl' : 'mr-auto max-w-4xl'}>
                 <div className={message.role === 'user' ? 'rounded-2xl bg-sky-600 p-4 text-white shadow-sm' : 'rounded-2xl border border-slate-200 bg-white p-4 text-slate-800 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100'}>
                   {message.blocked && <Badge tone="red">已拦截</Badge>}
@@ -203,7 +203,11 @@ export default function ChatPage() {
                   </div>
                 ) : null}
               </div>
-            ))}
+            )) : (
+              <div className="flex h-full min-h-64 items-center justify-center text-center text-sm text-slate-500 dark:text-slate-400">
+                选择左侧历史对话，或输入问题开始新对话
+              </div>
+            )}
             {loading && <p className="text-sm text-slate-500 dark:text-slate-400">正在检索并生成回答...</p>}
           </div>
           <div className="border-t border-slate-200 p-4 dark:border-slate-800">

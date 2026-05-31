@@ -1,0 +1,29 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# JavaScript dependencies and builds
+node_modules/
+algorithm-rag/frontend/node_modules/
+algorithm-rag/frontend/.next/
+algorithm-rag/frontend/out/
+
+# Virtual environments
+.venv/
+
+# Local configuration and tool state
+.claude/
+.agents/
+.agent/
+.trellis/
+.env
+.env.*
+!.env.example
+AGENTS.md
+
+# Runtime data
+algorithm-rag/data/

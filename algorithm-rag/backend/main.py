@@ -97,6 +97,7 @@ def conversation_out(conversation: Conversation, include_messages: bool = True) 
         id=conversation.id,
         user_id=conversation.user_id,
         username=display_username(conversation.user) if conversation.user else None,
+        email=conversation.user.email if conversation.user else None,
         title=conversation.title,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
@@ -110,6 +111,7 @@ def conversation_summary(conversation: Conversation, message_count: int = 0, las
         id=conversation.id,
         user_id=conversation.user_id,
         username=display_username(conversation.user) if conversation.user else None,
+        email=conversation.user.email if conversation.user else None,
         title=conversation.title,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
@@ -117,6 +119,45 @@ def conversation_summary(conversation: Conversation, message_count: int = 0, las
         message_count=message_count,
         last_message_preview=last_preview,
     )
+
+
+def parse_conversation_status(status: str | None) -> str:
+    normalized = (status or "active").strip().lower()
+    if normalized not in {"active", "deleted"}:
+        raise HTTPException(status_code=400, detail="status 只能是 active 或 deleted")
+    return normalized
+
+
+def parse_user_ids(user_ids: str | None) -> list[int] | None:
+    if user_ids is None:
+        return None
+    ids: list[int] = []
+    for raw_id in user_ids.split(","):
+        value = raw_id.strip()
+        if not value:
+            continue
+        try:
+            user_id = int(value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="user_ids 必须是逗号分隔的用户 ID") from exc
+        if user_id <= 0:
+            raise HTTPException(status_code=400, detail="user_ids 必须是正整数")
+        ids.append(user_id)
+    return ids or None
+
+
+def apply_admin_conversation_filters(query, status: str | None = None, user_id: int | None = None, user_ids: str | None = None):
+    conversation_status = parse_conversation_status(status)
+    parsed_user_ids = parse_user_ids(user_ids)
+    if conversation_status == "active":
+        query = query.filter(Conversation.deleted_at.is_(None))
+    else:
+        query = query.filter(Conversation.deleted_at.is_not(None))
+    if parsed_user_ids is not None:
+        query = query.filter(Conversation.user_id.in_(parsed_user_ids))
+    elif user_id is not None:
+        query = query.filter(Conversation.user_id == user_id)
+    return query
 
 
 def search_snippet(content: str, query: str, radius: int = 36) -> str:
@@ -576,13 +617,13 @@ def delete_conversation(conversation_id: int, current_user: User = Depends(get_c
 @app.get("/admin/conversations", response_model=list[ConversationSummary])
 def admin_list_conversations(
     q: str | None = None,
+    status: str | None = None,
     user_id: int | None = None,
+    user_ids: str | None = None,
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> list[ConversationSummary]:
-    query = db.query(Conversation).join(User).filter(Conversation.deleted_at.is_(None))
-    if user_id is not None:
-        query = query.filter(Conversation.user_id == user_id)
+    query = apply_admin_conversation_filters(db.query(Conversation).join(User), status, user_id, user_ids)
     if q and q.strip():
         pattern = f"%{q.strip()}%"
         query = query.filter(or_(Conversation.title.ilike(pattern), User.username.ilike(pattern), User.email.ilike(pattern)))
@@ -603,7 +644,9 @@ def admin_list_conversations(
 @app.get("/admin/conversations/search", response_model=list[ConversationSearchResult])
 def admin_search_conversations(
     q: str,
+    status: str | None = None,
     user_id: int | None = None,
+    user_ids: str | None = None,
     _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> list[ConversationSearchResult]:
@@ -611,22 +654,21 @@ def admin_search_conversations(
     if not query:
         return []
     pattern = f"%{query}%"
-    rows_query = (
+    rows_query = apply_admin_conversation_filters(
         db.query(Conversation, ConversationMessage)
         .join(User, User.id == Conversation.user_id)
-        .join(ConversationMessage, ConversationMessage.conversation_id == Conversation.id)
-        .filter(
-            Conversation.deleted_at.is_(None),
-            or_(
-                Conversation.title.ilike(pattern),
-                ConversationMessage.content.ilike(pattern),
-                User.username.ilike(pattern),
-                User.email.ilike(pattern),
-            ),
+        .join(ConversationMessage, ConversationMessage.conversation_id == Conversation.id),
+        status,
+        user_id,
+        user_ids,
+    ).filter(
+        or_(
+            Conversation.title.ilike(pattern),
+            ConversationMessage.content.ilike(pattern),
+            User.username.ilike(pattern),
+            User.email.ilike(pattern),
         )
     )
-    if user_id is not None:
-        rows_query = rows_query.filter(Conversation.user_id == user_id)
     rows = rows_query.order_by(Conversation.updated_at.desc(), ConversationMessage.created_at.asc()).limit(100).all()
     return [
         ConversationSearchResult(
@@ -645,7 +687,7 @@ def admin_search_conversations(
 
 @app.get("/admin/conversations/{conversation_id}", response_model=ConversationOut)
 def admin_get_conversation(conversation_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)) -> ConversationOut:
-    conversation = db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.deleted_at.is_(None)).first()
+    conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
     if not conversation:
         raise HTTPException(status_code=404, detail="对话不存在")
     return conversation_out(conversation)
@@ -654,10 +696,23 @@ def admin_get_conversation(conversation_id: int, _: User = Depends(require_admin
 @app.post("/admin/conversations/{conversation_id}/delete", response_model=ConversationOut)
 @app.delete("/admin/conversations/{conversation_id}", response_model=ConversationOut)
 def admin_delete_conversation(conversation_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)) -> ConversationOut:
-    conversation = db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.deleted_at.is_(None)).first()
+    conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
     if not conversation:
         raise HTTPException(status_code=404, detail="对话不存在")
-    conversation.deleted_at = datetime.utcnow()
+    if conversation.deleted_at is None:
+        conversation.deleted_at = datetime.utcnow()
+    conversation.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(conversation)
+    return conversation_out(conversation)
+
+
+@app.post("/admin/conversations/{conversation_id}/restore", response_model=ConversationOut)
+def admin_restore_conversation(conversation_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)) -> ConversationOut:
+    conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="对话不存在")
+    conversation.deleted_at = None
     conversation.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(conversation)
@@ -721,6 +776,24 @@ def reject_registration_request(
 @app.get("/admin/users", response_model=list[UserOut])
 def admin_users(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[UserOut]:
     return [UserOut.model_validate(user) for user in db.query(User).order_by(User.created_at.desc()).all()]
+
+
+@app.get("/admin/users/search", response_model=list[UserOut])
+def admin_search_users(
+    q: str,
+    role: UserRole | None = None,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[UserOut]:
+    query = q.strip()
+    if not query:
+        return []
+    pattern = f"%{query}%"
+    users_query = db.query(User).filter(or_(User.username.ilike(pattern), User.email.ilike(pattern)))
+    if role is not None:
+        users_query = users_query.filter(User.role == role)
+    users = users_query.order_by(User.created_at.desc(), User.id.desc()).limit(50).all()
+    return [UserOut.model_validate(user) for user in users]
 
 
 @app.post("/admin/users", response_model=UserOut)

@@ -166,6 +166,7 @@ class ConversationOut(BaseModel):
     id: int
     user_id: int
     username: str | None = None
+    email: str | None = None
     title: str
     created_at: datetime
     updated_at: datetime
@@ -190,6 +191,7 @@ class ConversationSummary(BaseModel):
     id: int
     user_id: int
     username: str | None = None
+    email: str | None = None
     title: str
     created_at: datetime
     updated_at: datetime

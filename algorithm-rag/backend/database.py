@@ -53,6 +53,7 @@ class User(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     documents: Mapped[list["Document"]] = relationship(back_populates="uploaded_by_user", foreign_keys="Document.uploaded_by")
+    conversations: Mapped[list["Conversation"]] = relationship(back_populates="user")
 
 
 class RegistrationRequest(Base):
@@ -100,6 +101,38 @@ class AlgorithmEntry(Base):
     content: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    title: Mapped[str] = mapped_column(String(80), default="新对话")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+    user: Mapped[User] = relationship(back_populates="conversations")
+    messages: Mapped[list["ConversationMessage"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ConversationMessage.created_at",
+    )
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"), index=True)
+    role: Mapped[str] = mapped_column(String(20), index=True)
+    content: Mapped[str] = mapped_column(Text)
+    sources: Mapped[list] = mapped_column(JSON, default=list)
+    blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    conversation: Mapped[Conversation] = relationship(back_populates="messages")
 
 
 class Prompt(Base):
@@ -223,6 +256,15 @@ def _sqlite_lightweight_migrations() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_algorithm_entries_id ON algorithm_entries (id)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_algorithm_entries_title ON algorithm_entries (title)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_algorithm_entries_category ON algorithm_entries (category)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversations_id ON conversations (id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversations_user_id ON conversations (user_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversations_created_at ON conversations (created_at)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversations_updated_at ON conversations (updated_at)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversations_deleted_at ON conversations (deleted_at)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversation_messages_id ON conversation_messages (id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversation_messages_conversation_id ON conversation_messages (conversation_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversation_messages_role ON conversation_messages (role)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversation_messages_created_at ON conversation_messages (created_at)"))
         connection.execute(
             text(
                 """

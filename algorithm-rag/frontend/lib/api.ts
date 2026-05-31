@@ -51,6 +51,44 @@ export type ChatResponse = {
   answer: string;
   sources: Source[];
   blocked: boolean;
+  conversation_id: number;
+  title: string;
+};
+
+export type ConversationMessage = {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  sources: Source[];
+  blocked: boolean;
+  created_at: string;
+};
+
+export type Conversation = {
+  id: number;
+  user_id: number;
+  username: string | null;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  messages: ConversationMessage[];
+};
+
+export type ConversationSummary = Omit<Conversation, 'messages'> & {
+  message_count: number;
+  last_message_preview: string | null;
+};
+
+export type ConversationSearchResult = {
+  conversation_id: number;
+  message_id: number;
+  title: string;
+  user_id: number;
+  username: string | null;
+  role: 'user' | 'assistant';
+  snippet: string;
+  created_at: string;
 };
 
 export type Prompt = {
@@ -127,7 +165,16 @@ export const api = {
   },
   approve: (id: number) => request<DocumentItem>(`/documents/${id}/approve`, { method: 'POST' }),
   retry: (id: number) => request<DocumentItem>(`/documents/${id}/retry`, { method: 'POST' }),
-  chat: (message: string) => request<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify({ message }) }),
+  chat: (message: string, conversationId?: number | null) => request<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify({ message, conversation_id: conversationId ?? null }) }),
+  conversations: () => request<ConversationSummary[]>('/conversations'),
+  createConversation: () => request<Conversation>('/conversations', { method: 'POST' }),
+  getConversation: (id: number) => request<Conversation>(`/conversations/${id}`),
+  searchConversations: (query: string) => request<ConversationSearchResult[]>(`/conversations/search?q=${encodeURIComponent(query)}`),
+  deleteConversation: (id: number) => request<Conversation>(`/conversations/${id}/delete`, { method: 'POST' }),
+  adminConversations: () => request<ConversationSummary[]>('/admin/conversations'),
+  adminGetConversation: (id: number) => request<Conversation>(`/admin/conversations/${id}`),
+  adminSearchConversations: (query: string) => request<ConversationSearchResult[]>(`/admin/conversations/search?q=${encodeURIComponent(query)}`),
+  adminDeleteConversation: (id: number) => request<Conversation>(`/admin/conversations/${id}/delete`, { method: 'POST' }),
   users: () => request<User[]>('/admin/users'),
   createUser: (payload: { username: string; password: string; role: Role; email?: string }) =>
     request<User>('/admin/users', { method: 'POST', body: JSON.stringify(payload) }),

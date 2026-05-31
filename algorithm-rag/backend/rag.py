@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from config import get_settings
 from database import ChatLog, Document, DocumentStatus, Prompt, User
 from prompts import DEFAULT_PROMPT
-from schemas import ChatResponse, SourceOut
+from schemas import SourceOut
 from vector_store import search_ready_documents
 
 ALGORITHM_KEYWORDS = {
@@ -99,7 +99,7 @@ def call_llm(question: str, context: str, prompt: str) -> str:
     return response.choices[0].message.content or "未能生成回答。"
 
 
-def answer_question(db: Session, user: User, question: str) -> ChatResponse:
+def answer_question(db: Session, user: User, question: str) -> tuple[str, list[SourceOut], bool]:
     settings = get_settings()
     if len(question) > settings.max_chat_message_chars:
         raise HTTPException(
@@ -112,8 +112,8 @@ def answer_question(db: Session, user: User, question: str) -> ChatResponse:
         answer = "当前算法知识库还没有可查询资料，请先让管理员上传或审核算法资料。"
         log = ChatLog(user_id=user.id, question=question, answer=answer, sources=[], blocked=True)
         db.add(log)
-        db.commit()
-        return ChatResponse(answer=answer, sources=[], blocked=True)
+        db.flush()
+        return answer, [], True
 
     matches = search_ready_documents(question, ready_ids, settings.rag_top_k)
     ranked = rerank(question, matches, settings.rerank_top_k)
@@ -121,8 +121,8 @@ def answer_question(db: Session, user: User, question: str) -> ChatResponse:
         answer = "我在当前算法知识库中没有找到相关内容，请先让管理员上传或审核相关算法资料。"
         log = ChatLog(user_id=user.id, question=question, answer=answer, sources=[], blocked=True)
         db.add(log)
-        db.commit()
-        return ChatResponse(answer=answer, sources=[], blocked=True)
+        db.flush()
+        return answer, [], True
 
     prompt = get_active_prompt(db)
     sources = build_sources(ranked)
@@ -134,5 +134,5 @@ def answer_question(db: Session, user: User, question: str) -> ChatResponse:
     source_dicts = [source.model_dump() for source in sources]
     log = ChatLog(user_id=user.id, question=question, answer=answer, sources=source_dicts, blocked=False)
     db.add(log)
-    db.commit()
-    return ChatResponse(answer=answer, sources=sources, blocked=False)
+    db.flush()
+    return answer, sources, False

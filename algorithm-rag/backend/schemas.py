@@ -135,12 +135,62 @@ class SourceOut(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    conversation_id: int | None = None
 
 
 class ChatResponse(BaseModel):
     answer: str
     sources: list[SourceOut]
     blocked: bool = False
+    conversation_id: int
+    title: str
+
+
+class ConversationMessageOut(BaseModel):
+    id: int
+    role: str
+    content: str
+    sources: list[dict[str, Any]]
+    blocked: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationOut(BaseModel):
+    id: int
+    user_id: int
+    username: str | None = None
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: datetime | None
+    messages: list[ConversationMessageOut] = []
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationSearchResult(BaseModel):
+    conversation_id: int
+    message_id: int
+    title: str
+    user_id: int
+    username: str | None = None
+    role: str
+    snippet: str
+    created_at: datetime
+
+
+class ConversationSummary(BaseModel):
+    id: int
+    user_id: int
+    username: str | None = None
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: datetime | None
+    message_count: int = 0
+    last_message_preview: str | None = None
 
 
 class PromptOut(BaseModel):

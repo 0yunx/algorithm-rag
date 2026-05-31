@@ -14,7 +14,7 @@ import {
   UserCheck,
   Users,
 } from 'lucide-react';
-import { api, clearToken, type ChatLog, type DocumentItem, type Prompt, type RegistrationRequest, type Role, type Source, type User } from '@/lib/api';
+import { api, clearToken, type ChatLog, type Conversation, type ConversationSearchResult, type ConversationSummary, type DocumentItem, type Prompt, type RegistrationRequest, type Role, type Source, type User } from '@/lib/api';
 import { kindLabel, statusLabel, statusTone } from '@/lib/labels';
 import { Badge, Button, Card, DangerButton, Input, PasswordInput, SecondaryButton, Select, Textarea, ThemeToggle } from '@/components/ui';
 
@@ -74,6 +74,10 @@ export default function AdminPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [requests, setRequests] = useState<RegistrationRequest[]>([]);
   const [logs, setLogs] = useState<ChatLog[]>([]);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
+  const [conversationSearch, setConversationSearch] = useState('');
+  const [conversationResults, setConversationResults] = useState<ConversationSearchResult[]>([]);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [promptDraft, setPromptDraft] = useState('');
 
@@ -109,11 +113,12 @@ export default function AdminPage() {
     else setLoadingCore(true);
     setPageError('');
     try {
-      const [docs, userList, registrationRequests, chatLogs] = await Promise.all([api.documents(), api.users(), api.registrationRequests(), api.chatLogs()]);
+      const [docs, userList, registrationRequests, chatLogs, conversationList] = await Promise.all([api.documents(), api.users(), api.registrationRequests(), api.chatLogs(), api.adminConversations()]);
       setDocuments(docs);
       setUsers(userList);
       setRequests(registrationRequests);
       setLogs(chatLogs);
+      setConversations(conversationList);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '加载管理数据失败');
     } finally {
@@ -149,6 +154,39 @@ export default function AdminPage() {
     }, 5000);
     return () => window.clearInterval(timer);
   }, [loadCore, loadPrompt, ready, user]);
+
+  useEffect(() => {
+    const query = conversationSearch.trim();
+    if (!query) {
+      setConversationResults([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      api.adminSearchConversations(query).then(setConversationResults).catch((error) => setPageError(error instanceof Error ? error.message : '搜索对话失败'));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [conversationSearch]);
+
+  async function openConversation(id: number) {
+    setPageError('');
+    try {
+      setSelectedConversation(await api.adminGetConversation(id));
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '打开对话失败');
+    }
+  }
+
+  async function deleteConversation(id: number) {
+    if (!window.confirm('确认软删除该对话？')) return;
+    setPageError('');
+    try {
+      await api.adminDeleteConversation(id);
+      if (selectedConversation?.id === id) setSelectedConversation(null);
+      await loadCore(true);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '删除对话失败');
+    }
+  }
 
   async function handleUpload(file: File) {
     setUploadError('');
@@ -299,6 +337,7 @@ export default function AdminPage() {
                 <Badge tone="red">失败 {failedCount}</Badge>
                 <Badge tone="neutral">用户 {users.length}</Badge>
                 <Badge tone="neutral">聊天日志 {logs.length}</Badge>
+                <Badge tone="neutral">对话 {conversations.length}</Badge>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -378,6 +417,16 @@ export default function AdminPage() {
           <Card className="space-y-4 p-5 xl:col-span-2">
             <div className="flex items-center gap-2"><ShieldCheck size={18} className="text-sky-600 dark:text-sky-200" /><div><h2 className="text-lg font-semibold">系统提示词编辑</h2><p className="text-xs text-slate-500 dark:text-slate-400">修改当前生效的系统提示词，保存后立即切换。</p></div></div>
             {loadingPrompt && !prompt ? <p className="text-sm text-slate-500 dark:text-slate-400">加载中...</p> : <><div className="flex flex-wrap gap-2 text-xs"><Badge tone="blue">{prompt?.name || '当前生效'}</Badge>{prompt ? <Badge tone="neutral">更新于 {formatDate(prompt.updated_at)}</Badge> : null}</div><Textarea rows={14} value={promptDraft} onChange={(event) => setPromptDraft(event.target.value)} placeholder="编辑系统提示词" />{promptError && <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-200">{promptError}</p>}<div className="flex justify-end"><Button onClick={() => void savePrompt()} disabled={savingPrompt}>{savingPrompt ? <LoaderCircle size={16} className="animate-spin" /> : null}保存提示词</Button></div></>}
+          </Card>
+
+          <Card className="space-y-4 p-5 xl:col-span-3">
+            <div className="flex items-center gap-2"><MessagesSquare size={18} className="text-sky-600 dark:text-sky-200" /><div><h2 className="text-lg font-semibold">对话管理</h2><p className="text-xs text-slate-500 dark:text-slate-400">搜索、查看并软删除所有用户未删除的对话。</p></div></div>
+            <Input value={conversationSearch} onChange={(event) => setConversationSearch(event.target.value)} placeholder="搜索所有对话内容" />
+            {conversationResults.length ? <div className="grid gap-2 lg:grid-cols-2">{conversationResults.map((result) => <button key={`${result.conversation_id}-${result.message_id}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-left text-sm hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950/50 dark:hover:bg-slate-900" onClick={() => void openConversation(result.conversation_id)}><span className="font-semibold">{result.title} · {result.username || `#${result.user_id}`}</span><span className="mt-1 line-clamp-2 block text-xs text-slate-500 dark:text-slate-400">{result.snippet}</span></button>)}</div> : null}
+            <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
+              <div className="max-h-[28rem] space-y-2 overflow-y-auto pr-1">{conversations.length ? conversations.map((conversation) => <div key={conversation.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50"><button className="block w-full text-left" onClick={() => void openConversation(conversation.id)}><p className="truncate text-sm font-medium">{conversation.title}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{conversation.username || `#${conversation.user_id}`} · {formatDate(conversation.updated_at)} · {conversation.message_count} 条</p><p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{conversation.last_message_preview || '暂无消息'}</p></button><DangerButton className="mt-3 text-xs" onClick={() => void deleteConversation(conversation.id)}><Trash2 size={14} />软删除</DangerButton></div>) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无对话。</p>}</div>
+              <div className="max-h-[28rem] space-y-3 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">{selectedConversation ? <><div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold">{selectedConversation.title}</h3><p className="text-xs text-slate-500 dark:text-slate-400">{selectedConversation.username || `#${selectedConversation.user_id}`} · {formatDate(selectedConversation.created_at)}</p></div><DangerButton className="text-xs" onClick={() => void deleteConversation(selectedConversation.id)}><Trash2 size={14} />软删除</DangerButton></div>{selectedConversation.messages.map((message) => <div key={message.id} className={message.role === 'user' ? 'ml-auto max-w-3xl rounded-2xl bg-sky-600 p-3 text-sm text-white' : 'mr-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900'}><p className="whitespace-pre-wrap">{message.content}</p>{message.sources.length ? <p className="mt-2 text-xs opacity-70">来源 {message.sources.length}</p> : null}</div>)}</> : <p className="text-sm text-slate-500 dark:text-slate-400">请选择一个对话查看详情。</p>}</div>
+            </div>
           </Card>
 
           <Card className="space-y-4 p-5 xl:col-span-3">

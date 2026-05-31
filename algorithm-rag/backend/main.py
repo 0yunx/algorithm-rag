@@ -4,13 +4,15 @@ from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from auth import authenticate_user, create_access_token, get_current_user, hash_password, require_admin
 from config import get_settings
 from database import (
     ChatLog,
+    Conversation,
+    ConversationMessage,
     Document,
     DocumentKind,
     DocumentStatus,
@@ -29,6 +31,10 @@ from schemas import (
     ChatLogOut,
     ChatRequest,
     ChatResponse,
+    ConversationMessageOut,
+    ConversationOut,
+    ConversationSearchResult,
+    ConversationSummary,
     CreateUserRequest,
     DocumentOut,
     LoginRequest,
@@ -66,6 +72,62 @@ def display_username(user: User | None) -> str:
     if not markers:
         return user.username
     return f"{user.username}（{'/'.join(markers)}）"
+
+
+def conversation_title(message: str) -> str:
+    title = "".join(message.split())[:10]
+    return title or "新对话"
+
+
+def message_out(message: ConversationMessage) -> ConversationMessageOut:
+    return ConversationMessageOut(
+        id=message.id,
+        role=message.role,
+        content=message.content,
+        sources=message.sources or [],
+        blocked=message.blocked,
+        created_at=message.created_at,
+    )
+
+
+def conversation_out(conversation: Conversation, include_messages: bool = True) -> ConversationOut:
+    return ConversationOut(
+        id=conversation.id,
+        user_id=conversation.user_id,
+        username=display_username(conversation.user) if conversation.user else None,
+        title=conversation.title,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+        deleted_at=conversation.deleted_at,
+        messages=[message_out(message) for message in conversation.messages] if include_messages else [],
+    )
+
+
+def conversation_summary(conversation: Conversation, message_count: int = 0, last_preview: str | None = None) -> ConversationSummary:
+    return ConversationSummary(
+        id=conversation.id,
+        user_id=conversation.user_id,
+        username=display_username(conversation.user) if conversation.user else None,
+        title=conversation.title,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+        deleted_at=conversation.deleted_at,
+        message_count=message_count,
+        last_message_preview=last_preview,
+    )
+
+
+def search_snippet(content: str, query: str, radius: int = 36) -> str:
+    lower_content = content.lower()
+    lower_query = query.lower()
+    index = lower_content.find(lower_query)
+    if index < 0:
+        return content[: radius * 2]
+    start = max(0, index - radius)
+    end = min(len(content), index + len(query) + radius)
+    prefix = "..." if start else ""
+    suffix = "..." if end < len(content) else ""
+    return f"{prefix}{content[start:end]}{suffix}"
 
 
 @app.on_event("startup")
@@ -301,7 +363,201 @@ def chat(payload: ChatRequest, current_user: User = Depends(get_current_user), d
     message = payload.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="消息不能为空")
-    return answer_question(db, current_user, message)
+    conversation: Conversation | None = None
+    if payload.conversation_id is not None:
+        conversation = (
+            db.query(Conversation)
+            .filter(
+                Conversation.id == payload.conversation_id,
+                Conversation.user_id == current_user.id,
+                Conversation.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if not conversation:
+            raise HTTPException(status_code=404, detail="对话不存在")
+    else:
+        conversation = Conversation(user_id=current_user.id, title=conversation_title(message))
+        db.add(conversation)
+        db.flush()
+
+    user_message = ConversationMessage(conversation_id=conversation.id, role="user", content=message)
+    db.add(user_message)
+    answer, sources, blocked = answer_question(db, current_user, message)
+    source_dicts = [source.model_dump() for source in sources]
+    assistant_message = ConversationMessage(
+        conversation_id=conversation.id,
+        role="assistant",
+        content=answer,
+        sources=source_dicts,
+        blocked=blocked,
+    )
+    db.add(assistant_message)
+    conversation.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(conversation)
+    return ChatResponse(answer=answer, sources=sources, blocked=blocked, conversation_id=conversation.id, title=conversation.title)
+
+
+@app.get("/conversations", response_model=list[ConversationSummary])
+def list_conversations(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ConversationSummary]:
+    conversations = (
+        db.query(Conversation)
+        .filter(Conversation.user_id == current_user.id, Conversation.deleted_at.is_(None))
+        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+        .all()
+    )
+    result: list[ConversationSummary] = []
+    for conversation in conversations:
+        count = db.query(func.count(ConversationMessage.id)).filter(ConversationMessage.conversation_id == conversation.id).scalar() or 0
+        last_message = (
+            db.query(ConversationMessage)
+            .filter(ConversationMessage.conversation_id == conversation.id)
+            .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
+            .first()
+        )
+        result.append(conversation_summary(conversation, int(count), last_message.content[:80] if last_message else None))
+    return result
+
+
+@app.post("/conversations", response_model=ConversationOut)
+def create_conversation(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ConversationOut:
+    conversation = Conversation(user_id=current_user.id, title="新对话")
+    db.add(conversation)
+    db.commit()
+    db.refresh(conversation)
+    return conversation_out(conversation)
+
+
+@app.get("/conversations/search", response_model=list[ConversationSearchResult])
+def search_conversations(q: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ConversationSearchResult]:
+    query = q.strip()
+    if not query:
+        return []
+    pattern = f"%{query}%"
+    rows = (
+        db.query(Conversation, ConversationMessage)
+        .join(ConversationMessage, ConversationMessage.conversation_id == Conversation.id)
+        .filter(
+            Conversation.user_id == current_user.id,
+            Conversation.deleted_at.is_(None),
+            or_(Conversation.title.ilike(pattern), ConversationMessage.content.ilike(pattern)),
+        )
+        .order_by(Conversation.updated_at.desc(), ConversationMessage.created_at.asc())
+        .limit(50)
+        .all()
+    )
+    return [
+        ConversationSearchResult(
+            conversation_id=conversation.id,
+            message_id=message.id,
+            title=conversation.title,
+            user_id=conversation.user_id,
+            username=None,
+            role=message.role,
+            snippet=search_snippet(message.content, query),
+            created_at=message.created_at,
+        )
+        for conversation, message in rows
+    ]
+
+
+@app.get("/conversations/{conversation_id}", response_model=ConversationOut)
+def get_conversation(conversation_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ConversationOut:
+    conversation = (
+        db.query(Conversation)
+        .filter(Conversation.id == conversation_id, Conversation.user_id == current_user.id, Conversation.deleted_at.is_(None))
+        .first()
+    )
+    if not conversation:
+        raise HTTPException(status_code=404, detail="对话不存在")
+    return conversation_out(conversation)
+
+
+@app.post("/conversations/{conversation_id}/delete", response_model=ConversationOut)
+@app.delete("/conversations/{conversation_id}", response_model=ConversationOut)
+def delete_conversation(conversation_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ConversationOut:
+    conversation = (
+        db.query(Conversation)
+        .filter(Conversation.id == conversation_id, Conversation.user_id == current_user.id, Conversation.deleted_at.is_(None))
+        .first()
+    )
+    if not conversation:
+        raise HTTPException(status_code=404, detail="对话不存在")
+    conversation.deleted_at = datetime.utcnow()
+    conversation.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(conversation)
+    return conversation_out(conversation)
+
+
+@app.get("/admin/conversations", response_model=list[ConversationSummary])
+def admin_list_conversations(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[ConversationSummary]:
+    conversations = db.query(Conversation).filter(Conversation.deleted_at.is_(None)).order_by(Conversation.updated_at.desc(), Conversation.id.desc()).limit(300).all()
+    result: list[ConversationSummary] = []
+    for conversation in conversations:
+        count = db.query(func.count(ConversationMessage.id)).filter(ConversationMessage.conversation_id == conversation.id).scalar() or 0
+        last_message = (
+            db.query(ConversationMessage)
+            .filter(ConversationMessage.conversation_id == conversation.id)
+            .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
+            .first()
+        )
+        result.append(conversation_summary(conversation, int(count), last_message.content[:80] if last_message else None))
+    return result
+
+
+@app.get("/admin/conversations/search", response_model=list[ConversationSearchResult])
+def admin_search_conversations(q: str, _: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[ConversationSearchResult]:
+    query = q.strip()
+    if not query:
+        return []
+    pattern = f"%{query}%"
+    rows = (
+        db.query(Conversation, ConversationMessage)
+        .join(ConversationMessage, ConversationMessage.conversation_id == Conversation.id)
+        .filter(
+            Conversation.deleted_at.is_(None),
+            or_(Conversation.title.ilike(pattern), ConversationMessage.content.ilike(pattern)),
+        )
+        .order_by(Conversation.updated_at.desc(), ConversationMessage.created_at.asc())
+        .limit(100)
+        .all()
+    )
+    return [
+        ConversationSearchResult(
+            conversation_id=conversation.id,
+            message_id=message.id,
+            title=conversation.title,
+            user_id=conversation.user_id,
+            username=display_username(conversation.user),
+            role=message.role,
+            snippet=search_snippet(message.content, query),
+            created_at=message.created_at,
+        )
+        for conversation, message in rows
+    ]
+
+
+@app.get("/admin/conversations/{conversation_id}", response_model=ConversationOut)
+def admin_get_conversation(conversation_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)) -> ConversationOut:
+    conversation = db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.deleted_at.is_(None)).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="对话不存在")
+    return conversation_out(conversation)
+
+
+@app.post("/admin/conversations/{conversation_id}/delete", response_model=ConversationOut)
+@app.delete("/admin/conversations/{conversation_id}", response_model=ConversationOut)
+def admin_delete_conversation(conversation_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)) -> ConversationOut:
+    conversation = db.query(Conversation).filter(Conversation.id == conversation_id, Conversation.deleted_at.is_(None)).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="对话不存在")
+    conversation.deleted_at = datetime.utcnow()
+    conversation.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(conversation)
+    return conversation_out(conversation)
 
 
 @app.get("/admin/registration-requests", response_model=list[RegistrationRequestOut])

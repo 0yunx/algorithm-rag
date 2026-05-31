@@ -11,11 +11,12 @@ type MarkdownViewProps = {
   content: string;
   className?: string;
   inline?: boolean;
+  variant?: 'default' | 'document';
 };
 
-export function MarkdownView({ content, className, inline = false }: MarkdownViewProps) {
+export function MarkdownView({ content, className, inline = false, variant = 'default' }: MarkdownViewProps) {
   return (
-    <div className={cn('markdown-body text-sm leading-6', inline && 'markdown-body-compact', className)}>
+    <div className={cn('markdown-body text-sm leading-6', inline && 'markdown-body-compact', variant === 'document' && 'markdown-body-document', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeSanitize, rehypeKatex]}

@@ -28,7 +28,7 @@ export default function ChatPage() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>([{ role: 'assistant', content: '你好，我是算法 RAG 助手。请上传或等待管理员审核算法资料后提问。' }]);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -109,7 +109,7 @@ export default function ChatPage() {
 
   function startNewConversation() {
     setActiveConversationId(null);
-    setMessages([]);
+    setMessages([{ role: 'assistant', content: '你好，我是算法 RAG 助手。请上传或等待管理员审核算法资料后提问。' }]);
   }
 
   async function viewDocument(documentId: number) {
@@ -186,7 +186,7 @@ export default function ChatPage() {
             <p className="text-sm text-slate-500 dark:text-slate-400">只回答算法、数据结构、复杂度和刷题方法相关问题。当前用户：{user.username}</p>
           </div>
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50/60 p-4 dark:bg-slate-950/40">
-            {messages.length ? messages.map((message, index) => (
+            {messages.map((message, index) => (
               <div key={index} className={message.role === 'user' ? 'ml-auto max-w-3xl' : 'mr-auto max-w-4xl'}>
                 <div className={message.role === 'user' ? 'rounded-2xl bg-sky-600 p-4 text-white shadow-sm' : 'rounded-2xl border border-slate-200 bg-white p-4 text-slate-800 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100'}>
                   {message.blocked && <Badge tone="red">已拦截</Badge>}
@@ -194,20 +194,33 @@ export default function ChatPage() {
                 </div>
                 {message.sources?.length ? (
                   <div className="mt-2 grid gap-2">
-                    {message.sources.map((source, sourceIndex) => (
-                      <div key={sourceIndex} className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-                        <div className="font-semibold text-sky-700 dark:text-sky-200">{source.document_name} · {source.location}</div>
-                        <MarkdownView content={source.preview} className="mt-1 line-clamp-2 text-xs text-slate-600 dark:text-slate-300" inline />
-                      </div>
-                    ))}
+                    {message.sources.map((source, sourceIndex) => {
+                      const sourceContent = (
+                        <>
+                          <div className="font-semibold text-sky-700 dark:text-sky-200">{source.document_name} · {source.location}</div>
+                          <MarkdownView content={source.preview} className="mt-1 line-clamp-2 text-xs text-slate-600 dark:text-slate-300" inline />
+                        </>
+                      );
+
+                      return source.document_id ? (
+                        <button
+                          key={sourceIndex}
+                          type="button"
+                          className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left text-xs text-slate-600 shadow-sm transition hover:border-sky-300 hover:bg-sky-50/60 focus:outline-none focus:ring-2 focus:ring-sky-400 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-sky-400/40 dark:hover:bg-sky-400/10"
+                          onClick={() => void viewDocument(source.document_id)}
+                        >
+                          {sourceContent}
+                        </button>
+                      ) : (
+                        <div key={sourceIndex} className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                          {sourceContent}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : null}
               </div>
-            )) : (
-              <div className="flex h-full min-h-64 items-center justify-center text-center text-sm text-slate-500 dark:text-slate-400">
-                选择左侧历史对话，或输入问题开始新对话
-              </div>
-            )}
+            ))}
             {loading && <p className="text-sm text-slate-500 dark:text-slate-400">正在检索并生成回答...</p>}
           </div>
           <div className="border-t border-slate-200 p-4 dark:border-slate-800">
@@ -230,7 +243,7 @@ export default function ChatPage() {
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/60 p-5 dark:bg-slate-950/40">
               {documentDetail.content.trim() ? (
-                <MarkdownView content={documentDetail.content} />
+                <MarkdownView content={documentDetail.content} variant="document" />
               ) : (
                 <p className="text-sm text-slate-500 dark:text-slate-400">该文档没有可显示的文本内容。</p>
               )}

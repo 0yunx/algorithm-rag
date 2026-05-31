@@ -100,7 +100,7 @@ export function ThemeToggle() {
         localStorage.setItem('theme', next);
       }}
     >
-      切换明暗主题
+      设置
     </SecondaryButton>
   );
 }

@@ -136,7 +136,7 @@ python -m venv .venv
 npm --prefix .\algorithm-rag\frontend install
 ```
 
-如果前端依赖已经安装，可以跳过 `npm install`。根目录 `.venv` 是后端 Python 环境；BGE-M3 模型缓存位于 `.venv\huggingface`。
+如果前端依赖已经安装，可以跳过 `npm install`。但如果刚执行过 `git pull`，且前端出现 `Module not found`、Build Error 或登录页无法打开，请从仓库根目录重新运行 `npm --prefix .\algorithm-rag\frontend install`，同步别人新增到 `package.json` / `package-lock.json` 的依赖。根目录 `.venv` 是后端 Python 环境；BGE-M3 模型缓存位于 `.venv\huggingface`。
 
 ### 启动后端
 

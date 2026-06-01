@@ -121,6 +121,21 @@ def conversation_summary(conversation: Conversation, message_count: int = 0, las
     )
 
 
+def chat_log_out(log: ChatLog) -> ChatLogOut:
+    return ChatLogOut(
+        id=log.id,
+        user_id=log.user_id,
+        username=display_username(log.user),
+        email=log.user.email if log.user else None,
+        question=log.question,
+        answer=log.answer,
+        sources=log.sources or [],
+        blocked=log.blocked,
+        created_at=log.created_at,
+        deleted_at=log.deleted_at,
+    )
+
+
 def parse_conversation_status(status: str | None) -> str:
     normalized = (status or "active").strip().lower()
     if normalized not in {"active", "deleted"}:
@@ -873,22 +888,57 @@ def update_active_prompt(payload: PromptUpdateRequest, _: User = Depends(require
 
 
 @app.get("/admin/chat-logs", response_model=list[ChatLogOut])
-def chat_logs(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[ChatLogOut]:
-    logs = db.query(ChatLog).join(User).order_by(ChatLog.created_at.desc()).limit(200).all()
-    return [
-        ChatLogOut(
-            id=log.id,
-            user_id=log.user_id,
-            username=display_username(log.user),
-            email=log.user.email if log.user else None,
-            question=log.question,
-            answer=log.answer,
-            sources=log.sources or [],
-            blocked=log.blocked,
-            created_at=log.created_at,
-        )
-        for log in logs
-    ]
+def chat_logs(
+    status: str = "active",
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[ChatLogOut]:
+    if status not in {"active", "deleted"}:
+        raise HTTPException(status_code=400, detail="无效的日志状态")
+    query = db.query(ChatLog).join(User)
+    if status == "deleted":
+        query = query.filter(ChatLog.deleted_at.is_not(None))
+        logs = query.order_by(ChatLog.deleted_at.desc(), ChatLog.created_at.desc(), ChatLog.id.desc()).limit(200).all()
+    else:
+        query = query.filter(ChatLog.deleted_at.is_(None))
+        logs = query.order_by(ChatLog.created_at.desc(), ChatLog.id.desc()).limit(200).all()
+    return [chat_log_out(log) for log in logs]
+
+
+@app.post("/admin/chat-logs/{log_id}/delete", response_model=ChatLogOut)
+def delete_chat_log(log_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)) -> ChatLogOut:
+    log = db.get(ChatLog, log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="聊天日志不存在")
+    if log.deleted_at is None:
+        log.deleted_at = datetime.utcnow()
+        db.commit()
+        db.refresh(log)
+    return chat_log_out(log)
+
+
+@app.post("/admin/chat-logs/{log_id}/restore", response_model=ChatLogOut)
+def restore_chat_log(log_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)) -> ChatLogOut:
+    log = db.get(ChatLog, log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="聊天日志不存在")
+    if log.deleted_at is not None:
+        log.deleted_at = None
+        db.commit()
+        db.refresh(log)
+    return chat_log_out(log)
+
+
+@app.delete("/admin/chat-logs/{log_id}", response_model=dict[str, bool])
+def permanently_delete_chat_log(log_id: int, _: User = Depends(require_admin), db: Session = Depends(get_db)) -> dict[str, bool]:
+    log = db.get(ChatLog, log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="聊天日志不存在")
+    if log.deleted_at is None:
+        raise HTTPException(status_code=400, detail="请先软删除聊天日志")
+    db.delete(log)
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/health")

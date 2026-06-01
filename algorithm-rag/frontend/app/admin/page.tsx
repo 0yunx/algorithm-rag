@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type Key } from 'react';
 import {
   AlertTriangle,
   Eye,
@@ -82,6 +82,7 @@ export default function AdminPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [requests, setRequests] = useState<RegistrationRequest[]>([]);
   const [logs, setLogs] = useState<ChatLog[]>([]);
+  const [deletedLogs, setDeletedLogs] = useState<ChatLog[]>([]);
   const [conversationResults, setConversationResults] = useState<ConversationSearchResult[]>([]);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [promptDraft, setPromptDraft] = useState('');
@@ -101,10 +102,10 @@ export default function AdminPage() {
   const [searchingUsers, setSearchingUsers] = useState(false);
 
   // Chat log table state
-  const [activeLogTab, setActiveLogTab] = useState<'all' | 'filtered' | 'conversations'>('all');
+  const [activeLogTab, setActiveLogTab] = useState<'all' | 'filtered' | 'deleted' | 'conversations'>('all');
   const [logPage, setLogPage] = useState(1);
-  const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
-  const [hiddenLogIds, setHiddenLogIds] = useState<Set<number>>(new Set());
+  const [selectedLogDetail, setSelectedLogDetail] = useState<ChatLog | null>(null);
+  const [logActionId, setLogActionId] = useState<number | null>(null);
   const LOGS_PER_PAGE = 15;
 
   const [loadingCore, setLoadingCore] = useState(true);
@@ -143,11 +144,21 @@ export default function AdminPage() {
         .some((value) => value.toLowerCase().includes(term));
     });
   }, [chatSearch, logs, selectedLogUserId]);
+  const filteredDeletedLogs = useMemo(() => {
+    const term = chatSearch.trim().toLowerCase();
+    return deletedLogs.filter((log) => {
+      const matchesSelectedUser = selectedLogUserId === null || log.user_id === selectedLogUserId;
+      if (!matchesSelectedUser) return false;
+      if (!term) return true;
+      return [log.username, log.email || '', log.question, log.answer]
+        .some((value) => value.toLowerCase().includes(term));
+    });
+  }, [chatSearch, deletedLogs, selectedLogUserId]);
   const matchingLogUsers = useMemo(() => {
     const term = chatSearch.trim().toLowerCase();
     if (!term) return [];
     const seen = new Set<number>();
-    return logs
+    return [...logs, ...deletedLogs]
       .filter((log) => {
         if (seen.has(log.user_id)) return false;
         const matches = [log.username, log.email || ''].some((value) => value.toLowerCase().includes(term));
@@ -155,18 +166,25 @@ export default function AdminPage() {
         return matches;
       })
       .slice(0, 8);
-  }, [chatSearch, logs]);
+  }, [chatSearch, deletedLogs, logs]);
 
   const loadCore = useCallback(async (silent = false) => {
     if (silent) setRefreshingCore(true);
     else setLoadingCore(true);
     setPageError('');
     try {
-      const [docs, userList, registrationRequests, chatLogs] = await Promise.all([api.documents(), api.users(), api.registrationRequests(), api.chatLogs()]);
+      const [docs, userList, registrationRequests, activeChatLogs, deletedChatLogs] = await Promise.all([
+        api.documents(),
+        api.users(),
+        api.registrationRequests(),
+        api.chatLogs('active'),
+        api.chatLogs('deleted'),
+      ]);
       setDocuments(docs);
       setUsers(userList);
       setRequests(registrationRequests);
-      setLogs(chatLogs);
+      setLogs(activeChatLogs);
+      setDeletedLogs(deletedChatLogs);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '加载管理数据失败');
     } finally {
@@ -394,7 +412,7 @@ export default function AdminPage() {
     window.location.href = `/admin/conversations/${conversationId}`;
   }
 
-  function renderSourceCard(source: Source, key: React.Key, className: string) {
+  function renderSourceCard(source: Source, key: Key, className: string) {
     const sourceContent = (
       <>
         <p className="font-semibold text-sky-700 dark:text-sky-200">{source.document_name} · {source.location}</p>
@@ -420,6 +438,50 @@ export default function AdminPage() {
     setSelectedLogUserId(userId);
     setPageError('');
     setConversationResults([]);
+  }
+
+  async function softDeleteChatLog(log: ChatLog) {
+    if (!window.confirm(`确认删除这条聊天日志？可在已删除日志中恢复。`)) return;
+    setPageError('');
+    setLogActionId(log.id);
+    try {
+      await api.deleteChatLog(log.id);
+      setSelectedLogDetail((current) => (current?.id === log.id ? null : current));
+      await loadCore(true);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '删除聊天日志失败');
+    } finally {
+      setLogActionId(null);
+    }
+  }
+
+  async function restoreChatLog(log: ChatLog) {
+    setPageError('');
+    setLogActionId(log.id);
+    try {
+      await api.restoreChatLog(log.id);
+      setSelectedLogDetail((current) => (current?.id === log.id ? null : current));
+      await loadCore(true);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '恢复聊天日志失败');
+    } finally {
+      setLogActionId(null);
+    }
+  }
+
+  async function permanentlyDeleteChatLog(log: ChatLog) {
+    if (!window.confirm('此操作将永久删除该聊天日志，且无法恢复。确认继续？')) return;
+    setPageError('');
+    setLogActionId(log.id);
+    try {
+      await api.permanentlyDeleteChatLog(log.id);
+      setSelectedLogDetail((current) => (current?.id === log.id ? null : current));
+      await loadCore(true);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '永久删除聊天日志失败');
+    } finally {
+      setLogActionId(null);
+    }
   }
 
   async function searchConversationMessages() {
@@ -458,6 +520,7 @@ export default function AdminPage() {
                 <Badge tone="red">失败 {failedCount}</Badge>
                 <Badge tone="neutral">用户 {users.length}</Badge>
                 <Badge tone="neutral">聊天日志 {logs.length}</Badge>
+                <Badge tone="red">已删除日志 {deletedLogs.length}</Badge>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -668,7 +731,7 @@ export default function AdminPage() {
                   <Input value={chatSearch} onChange={(event) => { setChatSearch(event.target.value); setLogPage(1); }} placeholder="搜索用户名、邮箱、问题或回答" />
                   <SecondaryButton className="shrink-0" onClick={() => { setActiveLogTab('conversations'); void searchConversationMessages(); }}>搜索会话</SecondaryButton>
                 </div>
-                {selectedLogUserId !== null && <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-200"><span>正在查看用户：{logs.find((log) => log.user_id === selectedLogUserId)?.username || `#${selectedLogUserId}`}</span><button type="button" className="font-semibold underline underline-offset-2" onClick={() => void selectLogUser(null)}>返回全局</button></div>}
+                {selectedLogUserId !== null && <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-200"><span>正在查看用户：{[...logs, ...deletedLogs].find((log) => log.user_id === selectedLogUserId)?.username || `#${selectedLogUserId}`}</span><button type="button" className="font-semibold underline underline-offset-2" onClick={() => void selectLogUser(null)}>返回全局</button></div>}
               </div>
             </div>
 
@@ -677,6 +740,7 @@ export default function AdminPage() {
               {([
                 { key: 'all' as const, label: '全局日志', count: logs.length },
                 { key: 'filtered' as const, label: '当前显示', count: filteredLogs.length },
+                { key: 'deleted' as const, label: '已删除日志', count: filteredDeletedLogs.length },
                 { key: 'conversations' as const, label: '会话', count: conversationResults.length },
               ]).map((tab) => (
                 <button
@@ -687,7 +751,7 @@ export default function AdminPage() {
                       ? 'border-b-2 border-sky-500 text-sky-600 dark:text-sky-200'
                       : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
                   }`}
-                  onClick={() => { setActiveLogTab(tab.key); setLogPage(1); setExpandedLogId(null); }}
+                  onClick={() => { setActiveLogTab(tab.key); setLogPage(1); setSelectedLogDetail(null); }}
                 >
                   {tab.label}
                   <span className="ml-1.5 text-xs opacity-60">{tab.count}</span>
@@ -743,15 +807,17 @@ export default function AdminPage() {
               )
             )}
 
-            {/* Logs tabs (all / filtered) */}
+            {/* Logs tabs (all / filtered / deleted) */}
             {activeLogTab !== 'conversations' && (() => {
-              const sourceData = activeLogTab === 'all' ? logs : filteredLogs;
-              const visibleData = sourceData.filter((log) => !hiddenLogIds.has(log.id));
-              const totalPages = Math.max(1, Math.ceil(visibleData.length / LOGS_PER_PAGE));
+              const sourceData = activeLogTab === 'all' ? logs : activeLogTab === 'deleted' ? filteredDeletedLogs : filteredLogs;
+              const totalPages = Math.max(1, Math.ceil(sourceData.length / LOGS_PER_PAGE));
               const safePage = Math.min(logPage, totalPages);
-              const pagedData = visibleData.slice((safePage - 1) * LOGS_PER_PAGE, safePage * LOGS_PER_PAGE);
+              const pageStart = sourceData.length === 0 ? 0 : (safePage - 1) * LOGS_PER_PAGE;
+              const pagedData = sourceData.slice(pageStart, safePage * LOGS_PER_PAGE);
+              const isDeletedTab = activeLogTab === 'deleted';
+              const rowOffset = pageStart;
 
-              if (visibleData.length === 0) {
+              if (sourceData.length === 0) {
                 return (
                   <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无匹配的聊天日志。</p>
                 );
@@ -772,30 +838,48 @@ export default function AdminPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {pagedData.map((log) => (
+                        {pagedData.map((log, index) => (
                           <tr key={log.id} className="border-b border-slate-100 transition-colors hover:bg-slate-50 dark:border-slate-800/50 dark:hover:bg-slate-800/30">
-                            <td className="whitespace-nowrap px-4 py-3 text-slate-600 dark:text-[#cdd6f4]">{formatLogDate(log.created_at)}</td>
+                            <td className="whitespace-nowrap px-4 py-3 text-slate-600 dark:text-[#cdd6f4]">
+                              <span className="mr-2 text-xs text-slate-400 dark:text-slate-500">#{rowOffset + index + 1}</span>{formatLogDate(log.created_at)}
+                              {isDeletedTab && log.deleted_at ? <p className="mt-1 text-xs text-red-500 dark:text-red-300">删除：{formatDate(log.deleted_at)}</p> : null}
+                            </td>
                             <td className="px-4 py-3 text-slate-700 dark:text-[#cdd6f4]">{log.username}</td>
                             <td className="max-w-[200px] truncate px-4 py-3 text-slate-700 dark:text-[#cdd6f4]">{log.question.length > 20 ? `${log.question.slice(0, 20)}...` : log.question}</td>
                             <td className="px-4 py-3">
-                              <span className={`font-medium ${log.blocked ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                                {log.blocked ? '已拦截' : '已回答'}
-                              </span>
+                              <div className="flex flex-col items-start gap-1">
+                                <span className={`font-medium ${log.blocked ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                  {log.blocked ? '已拦截' : '已回答'}
+                                </span>
+                                {isDeletedTab ? <Badge tone="red">已删除</Badge> : null}
+                              </div>
                             </td>
                             <td className="px-4 py-3 text-right tabular-nums text-slate-700 dark:text-[#cdd6f4]">{log.sources.length}</td>
                             <td className="px-4 py-3">
-                              <div className="flex gap-2">
-                                <SecondaryButton className="text-xs" onClick={() => setExpandedLogId(expandedLogId === log.id ? null : log.id)}>
-                                  {expandedLogId === log.id ? '收起详情' : '查看详情'}
+                              <div className="flex flex-wrap gap-2">
+                                <SecondaryButton className="text-xs" onClick={() => setSelectedLogDetail(log)}>
+                                  查看详情
                                 </SecondaryButton>
-                                <button
-                                  type="button"
-                                  className="text-xs text-slate-400 transition hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400"
-                                  onClick={() => setHiddenLogIds((prev) => { const next = new Set(prev); next.add(log.id); return next; })}
-                                  title="隐藏此条"
-                                >
-                                  删除
-                                </button>
+                                {isDeletedTab ? (
+                                  <>
+                                    <SecondaryButton className="text-xs" onClick={() => void restoreChatLog(log)} disabled={logActionId === log.id}>
+                                      {logActionId === log.id ? <LoaderCircle size={14} className="animate-spin" /> : null}恢复
+                                    </SecondaryButton>
+                                    <DangerButton className="text-xs" onClick={() => void permanentlyDeleteChatLog(log)} disabled={logActionId === log.id}>
+                                      永久删除
+                                    </DangerButton>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="text-xs text-slate-400 transition hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-500 dark:hover:text-red-400"
+                                    onClick={() => void softDeleteChatLog(log)}
+                                    disabled={logActionId === log.id}
+                                    title="删除此条"
+                                  >
+                                    删除
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -804,41 +888,9 @@ export default function AdminPage() {
                     </table>
                   </div>
 
-                  {/* Expanded detail */}
-                  {expandedLogId !== null && (() => {
-                    const log = sourceData.find((l) => l.id === expandedLogId);
-                    if (!log) return null;
-                    return (
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
-                        <div className="mb-3 flex items-center justify-between">
-                          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">日志详情 · {log.username} · {formatLogDate(log.created_at)}</h3>
-                          <button type="button" className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" onClick={() => setExpandedLogId(null)}>收起</button>
-                        </div>
-                        <div className="space-y-4">
-                          <div>
-                            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">问题</p>
-                            <MarkdownView content={log.question} className="text-slate-800 dark:text-slate-100" />
-                          </div>
-                          <div>
-                            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">回答</p>
-                            <MarkdownView content={log.answer} className="text-slate-700 dark:text-slate-200" />
-                          </div>
-                          {log.sources.length > 0 && (
-                            <div>
-                              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">检索来源</p>
-                              <div className="space-y-2">
-                                {log.sources.map((source: Source, index: number) => renderSourceCard(source, `${log.id}-${index}`, 'rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })()}
-
                   {/* Pagination */}
                   <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                    <span>共 {visibleData.length} 条记录</span>
+                    <span>共 {sourceData.length} 条记录</span>
                     <div className="flex items-center gap-2">
                       <SecondaryButton className="text-xs" disabled={safePage <= 1} onClick={() => setLogPage((p) => Math.max(1, p - 1))}>上一页</SecondaryButton>
                       <span className="tabular-nums">第 {safePage} / {totalPages} 页</span>
@@ -851,6 +903,51 @@ export default function AdminPage() {
           </Card>
         </div>
       </div>
+      {selectedLogDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+          <Card className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
+              <div className="min-w-0">
+                <h2 className="text-lg font-bold">日志详情 · {selectedLogDetail.username}</h2>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  #{selectedLogDetail.id} · 用户 #{selectedLogDetail.user_id}{selectedLogDetail.email ? ` · ${selectedLogDetail.email}` : ''} · 创建：{formatLogDate(selectedLogDetail.created_at)}
+                  {selectedLogDetail.deleted_at ? ` · 删除：${formatDate(selectedLogDetail.deleted_at)}` : ''}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Badge tone={selectedLogDetail.blocked ? 'red' : 'green'}>{selectedLogDetail.blocked ? '已拦截' : '已回答'}</Badge>
+                  {selectedLogDetail.deleted_at ? <Badge tone="red">已删除</Badge> : null}
+                  <Badge tone="neutral">来源 {selectedLogDetail.sources.length}</Badge>
+                </div>
+              </div>
+              <DangerButton className="px-3" onClick={() => setSelectedLogDetail(null)} aria-label="关闭日志详情" title="关闭日志详情"><X size={16} /></DangerButton>
+            </div>
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-slate-50/60 p-5 dark:bg-slate-950/40">
+              <section>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">问题</p>
+                <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                  <MarkdownView content={selectedLogDetail.question} className="text-slate-800 dark:text-slate-100" />
+                </div>
+              </section>
+              <section>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">回答</p>
+                <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                  <MarkdownView content={selectedLogDetail.answer} className="text-slate-700 dark:text-slate-200" />
+                </div>
+              </section>
+              <section>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">检索来源</p>
+                {selectedLogDetail.sources.length > 0 ? (
+                  <div className="space-y-2">
+                    {selectedLogDetail.sources.map((source: Source, index: number) => renderSourceCard(source, `${selectedLogDetail.id}-${index}`, 'rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'))}
+                  </div>
+                ) : (
+                  <p className="rounded-xl border border-dashed border-slate-200 bg-white p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">无检索来源。</p>
+                )}
+              </section>
+            </div>
+          </Card>
+        </div>
+      )}
       {documentDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
           <Card className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">

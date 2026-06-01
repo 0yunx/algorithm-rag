@@ -162,6 +162,7 @@ class ChatLog(Base):
     sources: Mapped[list] = mapped_column(JSON, default=list)
     blocked: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
     user: Mapped[User] = relationship()
 
@@ -275,6 +276,10 @@ def _sqlite_lightweight_migrations() -> None:
                 )
             )
 
+        chat_log_columns = _sqlite_table_columns("chat_logs") if "chat_logs" in _sqlite_table_names() else set()
+        if "chat_logs" in _sqlite_table_names() and "deleted_at" not in chat_log_columns:
+            connection.execute(text("ALTER TABLE chat_logs ADD COLUMN deleted_at DATETIME"))
+
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_users_id ON users (id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_users_username ON users (username)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_users_email ON users (email)"))
@@ -291,6 +296,7 @@ def _sqlite_lightweight_migrations() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversation_messages_conversation_id ON conversation_messages (conversation_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversation_messages_role ON conversation_messages (role)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_conversation_messages_created_at ON conversation_messages (created_at)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_logs_deleted_at ON chat_logs (deleted_at)"))
         connection.execute(
             text(
                 """

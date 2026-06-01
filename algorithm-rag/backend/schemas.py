@@ -224,3 +224,4 @@ class ChatLogOut(BaseModel):
     sources: list[dict[str, Any]]
     blocked: bool
     created_at: datetime
+    deleted_at: datetime | None

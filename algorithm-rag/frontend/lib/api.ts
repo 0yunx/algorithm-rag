@@ -117,6 +117,7 @@ export type ChatLog = {
   sources: Source[];
   blocked: boolean;
   created_at: string;
+  deleted_at: string | null;
 };
 
 export function getToken() {
@@ -187,7 +188,10 @@ export const api = {
   rejectRegistration: (id: number) => request<RegistrationRequest>(`/admin/registration-requests/${id}/reject`, { method: 'POST' }),
   getPrompt: () => request<Prompt>('/admin/prompts/active'),
   updatePrompt: (content: string) => request<Prompt>('/admin/prompts/active', { method: 'PUT', body: JSON.stringify({ content }) }),
-  chatLogs: () => request<ChatLog[]>('/admin/chat-logs'),
+  chatLogs: (status: 'active' | 'deleted' = 'active') => request<ChatLog[]>(`/admin/chat-logs?status=${status}`),
+  deleteChatLog: (id: number) => request<ChatLog>(`/admin/chat-logs/${id}/delete`, { method: 'POST' }),
+  restoreChatLog: (id: number) => request<ChatLog>(`/admin/chat-logs/${id}/restore`, { method: 'POST' }),
+  permanentlyDeleteChatLog: (id: number) => request<{ ok: boolean }>(`/admin/chat-logs/${id}`, { method: 'DELETE' }),
   conversations: () => request<ConversationSummary[]>('/conversations'),
   createConversation: () => request<Conversation>('/conversations', { method: 'POST' }),
   conversation: (id: number) => request<Conversation>(`/conversations/${id}`),

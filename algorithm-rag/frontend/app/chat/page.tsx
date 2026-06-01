@@ -28,7 +28,7 @@ export default function ChatPage() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
-  const [messages, setMessages] = useState<Message[]>([{ role: 'assistant', content: '你好，我是算法 RAG 助手。请上传或等待管理员审核算法资料后提问。' }]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -109,7 +109,7 @@ export default function ChatPage() {
 
   function startNewConversation() {
     setActiveConversationId(null);
-    setMessages([{ role: 'assistant', content: '你好，我是算法 RAG 助手。请上传或等待管理员审核算法资料后提问。' }]);
+    setMessages([]);
   }
 
   async function viewDocument(documentId: number) {
@@ -157,7 +157,8 @@ export default function ChatPage() {
                 onClick={() => void openConversation(conversation.id)}
               >
                 <span className="block truncate font-medium">{conversation.title}</span>
-                {conversation.last_message_preview && <MarkdownView content={conversation.last_message_preview} className="mt-1 line-clamp-2 text-xs" inline />}
+                {conversation.last_message_preview && <span className="mt-1 line-clamp-2 block text-xs text-slate-500 dark:text-slate-400">{conversation.last_message_preview}</span>}
+                <span className="mt-1 block text-[10px] text-slate-400 dark:text-slate-500">{new Date(conversation.updated_at).toLocaleString('zh-CN', { hour12: false })}</span>
               </button>
             )) : <p className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">暂无历史对话。</p>}
           </div>
@@ -186,6 +187,11 @@ export default function ChatPage() {
             <p className="text-sm text-slate-500 dark:text-slate-400">只回答算法、数据结构、复杂度和刷题方法相关问题。当前用户：{user.username}</p>
           </div>
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-slate-50/60 p-4 dark:bg-slate-950/40">
+            {!activeConversationId && !messages.length ? (
+              <div className="flex h-full items-center justify-center">
+                <p className="text-sm text-slate-400 dark:text-slate-500">选择左侧历史对话，或输入问题开始新对话</p>
+              </div>
+            ) : null}
             {messages.map((message, index) => (
               <div key={index} className={message.role === 'user' ? 'ml-auto max-w-3xl' : 'mr-auto max-w-4xl'}>
                 <div className={message.role === 'user' ? 'rounded-2xl bg-sky-600 p-4 text-white shadow-sm' : 'rounded-2xl border border-slate-200 bg-white p-4 text-slate-800 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100'}>

@@ -68,7 +68,7 @@ export default function AdminConversationDetailPage() {
 
   async function updateVisibility(action: 'hide' | 'restore') {
     if (!conversation) return;
-    const confirmText = action === 'hide' ? '确认隐藏/软删除该会话？' : '确认恢复该会话？';
+    const confirmText = action === 'hide' ? '确认隐藏此对话？隐藏后普通用户将无法看到该对话。' : '确认恢复此对话？恢复后该对话将重新对普通用户可见。';
     if (!window.confirm(confirmText)) return;
     setSaving(true);
     setError('');
@@ -99,14 +99,14 @@ export default function AdminConversationDetailPage() {
                   <p className="text-sm text-slate-500 dark:text-slate-400">当前管理员：{user.username}</p>
                 </div>
               </div>
-              {conversation ? <div className="flex flex-wrap gap-2 text-xs"><Badge tone={conversation.deleted_at ? 'red' : 'green'}>{conversation.deleted_at ? '已隐藏/软删除' : '活跃'}</Badge><Badge tone="neutral">用户 {conversation.username || `#${conversation.user_id}`}</Badge>{conversation.email ? <Badge tone="neutral">{conversation.email}</Badge> : null}<Badge tone="neutral">消息 {conversation.messages.length}</Badge></div> : null}
+              {conversation ? <div className="flex flex-wrap gap-2 text-xs"><Badge tone={conversation.deleted_at ? 'red' : 'green'}>{conversation.deleted_at ? '已隐藏' : '正常'}</Badge><Badge tone="neutral">用户 {conversation.username || `#${conversation.user_id}`}</Badge>{conversation.email ? <Badge tone="neutral">{conversation.email}</Badge> : null}<Badge tone="neutral">消息 {conversation.messages.length}</Badge></div> : null}
             </div>
             <div className="flex flex-wrap gap-2">
               <ThemeToggle />
               <SecondaryButton onClick={() => { window.location.href = '/admin'; }}>返回管理后台</SecondaryButton>
               <SecondaryButton onClick={() => void loadConversation()} disabled={loading}>{loading ? <LoaderCircle size={16} className="animate-spin" /> : null}刷新</SecondaryButton>
-              {conversation?.deleted_at ? <SecondaryButton onClick={() => void updateVisibility('restore')} disabled={saving}>{saving ? <LoaderCircle size={16} className="animate-spin" /> : <RotateCcw size={16} />}恢复</SecondaryButton> : null}
-              {conversation && !conversation.deleted_at ? <DangerButton onClick={() => void updateVisibility('hide')} disabled={saving}>{saving ? <LoaderCircle size={16} className="animate-spin" /> : <Trash2 size={16} />}隐藏</DangerButton> : null}
+              {conversation?.deleted_at ? <SecondaryButton onClick={() => void updateVisibility('restore')} disabled={saving}>{saving ? <LoaderCircle size={16} className="animate-spin" /> : <RotateCcw size={16} />}恢复此对话</SecondaryButton> : null}
+              {conversation && !conversation.deleted_at ? <DangerButton onClick={() => void updateVisibility('hide')} disabled={saving}>{saving ? <LoaderCircle size={16} className="animate-spin" /> : <Trash2 size={16} />}隐藏此对话</DangerButton> : null}
               <SecondaryButton onClick={() => { clearToken(); window.location.href = '/login'; }}><X size={16} />退出登录</SecondaryButton>
             </div>
           </div>

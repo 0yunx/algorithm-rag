@@ -165,6 +165,96 @@
   }
 }
 
+/* Mac-style code block */
+.mac-code-block {
+  @apply my-3 overflow-hidden rounded-xl;
+  background: #1e1e1e;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.dark .mac-code-block {
+  background: #0d1117;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+.mac-code-block .mac-title-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #2d2d2d;
+  border-bottom: 1px solid #3d3d3d;
+  user-select: none;
+}
+
+.dark .mac-code-block .mac-title-bar {
+  background: #161b22;
+  border-bottom-color: #21262d;
+}
+
+.mac-code-block .mac-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mac-code-block .mac-dot-red {
+  background: #ff5f56;
+}
+
+.mac-code-block .mac-dot-yellow {
+  background: #ffbd2e;
+}
+
+.mac-code-block .mac-dot-green {
+  background: #27c93f;
+}
+
+.mac-code-block .mac-title-text {
+  margin-left: 6px;
+  font-size: 0.75rem;
+  color: #999;
+  font-family: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace;
+}
+
+.dark .mac-code-block .mac-title-text {
+  color: #8b949e;
+}
+
+
+/* -----------------------------------------------
+   Mac-style code block — syntax-highlighted code area
+   The generic .markdown-body code rule injects
+   text-slate-800 (dark text) which is invisible on
+   the dark code-block background.  Reset every
+   inherited property so the Prism theme controls
+   all colours.
+-------------------------------------------------- */
+.mac-code-block code,
+.mac-code-block code[class*="language-"] {
+  /* Reset the generic .markdown-body code styles */
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  font-size: inherit !important;
+  /* Default text colour — visible on both #1e1e1e and #0d1117 */
+  color: #e6edf3 !important;
+  /* Preserve monospace */
+  font-family: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.dark .mac-code-block code,
+.dark .mac-code-block code[class*="language-"] {
+  color: #c9d1d9 !important;
+}
+
+.mac-code-block > div,
+.mac-code-block > pre {
+  overflow-x: auto;
+}
+
 :root {
   --background: 210 40% 98%;
   --foreground: 222 47% 11%;

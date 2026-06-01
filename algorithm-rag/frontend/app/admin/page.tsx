@@ -16,13 +16,18 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { api, clearToken, type ChatLog, type Conversation, type ConversationSearchResult, type ConversationSummary, type DocumentDetail, type DocumentItem, type Prompt, type RegistrationRequest, type Role, type Source, type User } from '@/lib/api';
+import { api, clearToken, type ChatLog, type ConversationSearchResult, type ConversationSummary, type DocumentDetail, type DocumentItem, type Prompt, type RegistrationRequest, type Role, type Source, type User } from '@/lib/api';
 import { kindLabel, statusLabel, statusTone } from '@/lib/labels';
 import { MarkdownView } from '@/components/markdown-view';
 import { Badge, Button, Card, DangerButton, Input, PasswordInput, SecondaryButton, Select, Textarea, ThemeToggle } from '@/components/ui';
 
 function formatDate(value: string | null) {
   return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '无';
+}
+
+function formatLogDate(value: string) {
+  const d = new Date(value);
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
 }
 
 function roleLabel(role: Role) {
@@ -77,14 +82,30 @@ export default function AdminPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [requests, setRequests] = useState<RegistrationRequest[]>([]);
   const [logs, setLogs] = useState<ChatLog[]>([]);
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
-  const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [conversationResults, setConversationResults] = useState<ConversationSearchResult[]>([]);
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [promptDraft, setPromptDraft] = useState('');
   const [chatSearch, setChatSearch] = useState('');
   const [selectedLogUserId, setSelectedLogUserId] = useState<number | null>(null);
   const [documentDetail, setDocumentDetail] = useState<DocumentDetail | null>(null);
+
+  // Conversation review state
+  const [reviewExpanded, setReviewExpanded] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userSearchResults, setUserSearchResults] = useState<User[]>([]);
+  const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
+  const [conversationFilterStatus, setConversationFilterStatus] = useState<'active' | 'deleted'>('active');
+  const [reviewConversations, setReviewConversations] = useState<ConversationSummary[]>([]);
+  const [reviewConversationsLoading, setReviewConversationsLoading] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+  const [searchingUsers, setSearchingUsers] = useState(false);
+
+  // Chat log table state
+  const [activeLogTab, setActiveLogTab] = useState<'all' | 'filtered' | 'conversations'>('all');
+  const [logPage, setLogPage] = useState(1);
+  const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
+  const [hiddenLogIds, setHiddenLogIds] = useState<Set<number>>(new Set());
+  const LOGS_PER_PAGE = 15;
 
   const [loadingCore, setLoadingCore] = useState(true);
   const [loadingPrompt, setLoadingPrompt] = useState(true);
@@ -141,12 +162,11 @@ export default function AdminPage() {
     else setLoadingCore(true);
     setPageError('');
     try {
-      const [docs, userList, registrationRequests, chatLogs, conversationList] = await Promise.all([api.documents(), api.users(), api.registrationRequests(), api.chatLogs(), api.adminConversations()]);
+      const [docs, userList, registrationRequests, chatLogs] = await Promise.all([api.documents(), api.users(), api.registrationRequests(), api.chatLogs()]);
       setDocuments(docs);
       setUsers(userList);
       setRequests(registrationRequests);
       setLogs(chatLogs);
-      setConversations(conversationList);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '加载管理数据失败');
     } finally {
@@ -322,6 +342,58 @@ export default function AdminPage() {
     }
   }
 
+  // --- Conversation review helpers ---
+
+  async function searchUsersForReview(q: string) {
+    setUserSearchQuery(q);
+    if (!q.trim()) {
+      setUserSearchResults([]);
+      return;
+    }
+    setSearchingUsers(true);
+    try {
+      setUserSearchResults(await api.adminSearchUsers(q, 'people'));
+    } catch {
+      setUserSearchResults([]);
+    } finally {
+      setSearchingUsers(false);
+    }
+  }
+
+  function addUserToFilter(user: User) {
+    if (!selectedUsers.find((u) => u.id === user.id)) {
+      setSelectedUsers((prev) => [...prev, user]);
+    }
+    setUserSearchQuery('');
+    setUserSearchResults([]);
+  }
+
+  function removeUserFromFilter(userId: number) {
+    setSelectedUsers((prev) => prev.filter((u) => u.id !== userId));
+  }
+
+  async function loadReviewConversations(status: 'active' | 'deleted') {
+    setConversationFilterStatus(status);
+    setReviewConversationsLoading(true);
+    setReviewError('');
+    try {
+      const params: { status: typeof status; userIds?: number[] } = { status };
+      if (selectedUsers.length > 0) {
+        params.userIds = selectedUsers.map((u) => u.id);
+      }
+      setReviewConversations(await api.adminConversations(params));
+      setReviewExpanded(true);
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : '加载对话列表失败');
+    } finally {
+      setReviewConversationsLoading(false);
+    }
+  }
+
+  function navigateToConversation(conversationId: number) {
+    window.location.href = `/admin/conversations/${conversationId}`;
+  }
+
   function renderSourceCard(source: Source, key: React.Key, className: string) {
     const sourceContent = (
       <>
@@ -346,14 +418,8 @@ export default function AdminPage() {
 
   async function selectLogUser(userId: number | null) {
     setSelectedLogUserId(userId);
-    setSelectedConversation(null);
     setPageError('');
-    try {
-      setConversations(await api.adminConversations({ userId }));
-      setConversationResults([]);
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : '加载用户会话失败');
-    }
+    setConversationResults([]);
   }
 
   async function searchConversationMessages() {
@@ -367,15 +433,6 @@ export default function AdminPage() {
       setConversationResults(await api.adminSearchConversations(query, { userId: selectedLogUserId }));
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '搜索会话失败');
-    }
-  }
-
-  async function openAdminConversation(conversationId: number) {
-    setPageError('');
-    try {
-      setSelectedConversation(await api.adminConversation(conversationId));
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : '加载会话失败');
     }
   }
 
@@ -482,45 +539,318 @@ export default function AdminPage() {
             {loadingPrompt && !prompt ? <p className="text-sm text-slate-500 dark:text-slate-400">加载中...</p> : <><div className="flex flex-wrap gap-2 text-xs"><Badge tone="blue">{prompt?.name || '当前生效'}</Badge>{prompt ? <Badge tone="neutral">更新于 {formatDate(prompt.updated_at)}</Badge> : null}</div><Textarea rows={14} value={promptDraft} onChange={(event) => setPromptDraft(event.target.value)} placeholder="编辑系统提示词" />{promptError && <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-200">{promptError}</p>}<div className="flex justify-end"><Button onClick={() => void savePrompt()} disabled={savingPrompt}>{savingPrompt ? <LoaderCircle size={16} className="animate-spin" /> : null}保存提示词</Button></div></>}
           </Card>
 
+          {/* Conversation review module */}
+          <Card className="space-y-4 p-5 xl:col-span-3">
+            <div className="flex items-center gap-2">
+              <MessagesSquare size={18} className="text-sky-600 dark:text-sky-200" />
+              <div>
+                <h2 className="text-lg font-semibold">对话审查</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">查看和管理用户对话，支持按用户筛选、隐藏和恢复。</p>
+              </div>
+            </div>
+
+            {!reviewExpanded ? (
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={() => void loadReviewConversations('active')}>查看全局对话</Button>
+                <SecondaryButton onClick={() => { setReviewExpanded(true); }}>搜索用户</SecondaryButton>
+                <SecondaryButton onClick={() => void loadReviewConversations('deleted')}>已隐藏 / 已软删除</SecondaryButton>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <SecondaryButton onClick={() => { setReviewExpanded(false); setReviewConversations([]); }}>收起</SecondaryButton>
+                </div>
+
+                {/* User search */}
+                <div className="relative">
+                  <div className="flex gap-2">
+                    <Input
+                      value={userSearchQuery}
+                      onChange={(event) => { void searchUsersForReview(event.target.value); }}
+                      placeholder="搜索用户（people）..."
+                    />
+                  </div>
+                  {userSearchResults.length > 0 && (
+                    <div className="absolute z-10 mt-1 w-full rounded-xl border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                      {userSearchResults.map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          className="w-full px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-sky-50 dark:text-slate-200 dark:hover:bg-sky-400/10"
+                          onClick={() => addUserToFilter(u)}
+                        >
+                          {u.username}{u.email ? ` · ${u.email}` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Selected user tags */}
+                {selectedUsers.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {selectedUsers.map((u) => (
+                      <span key={u.id} className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-200">
+                        {u.username}
+                        <button type="button" className="ml-0.5 rounded-full p-0.5 transition hover:bg-sky-200 dark:hover:bg-sky-400/20" onClick={() => removeUserFromFilter(u.id)} aria-label={`移除 ${u.username}`} title={`移除 ${u.username}`}>&times;</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => void loadReviewConversations('active')} disabled={reviewConversationsLoading}>
+                    {reviewConversationsLoading && conversationFilterStatus === 'active' ? <LoaderCircle size={14} className="animate-spin" /> : null}
+                    查看全局对话
+                  </Button>
+                  <SecondaryButton onClick={() => void loadReviewConversations('deleted')} disabled={reviewConversationsLoading}>
+                    {reviewConversationsLoading && conversationFilterStatus === 'deleted' ? <LoaderCircle size={14} className="animate-spin" /> : null}
+                    已隐藏 / 已软删除
+                  </SecondaryButton>
+                </div>
+
+                {/* Status badge */}
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <Badge tone={conversationFilterStatus === 'active' ? 'green' : 'red'}>
+                    {conversationFilterStatus === 'active' ? '活跃对话' : '已隐藏 / 已软删除'}
+                  </Badge>
+                  {selectedUsers.length > 0 && (
+                    <Badge tone="blue">已筛选 {selectedUsers.length} 个用户</Badge>
+                  )}
+                  <Badge tone="neutral">{reviewConversations.length} 个对话</Badge>
+                </div>
+
+                {reviewError && (
+                  <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-400/30 dark:bg-red-400/10 dark:text-red-200">{reviewError}</p>
+                )}
+
+                {/* Conversation summary cards */}
+                <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+                  {reviewConversations.length ? reviewConversations.map((conversation) => (
+                    <button
+                      key={conversation.id}
+                      type="button"
+                      className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-sm shadow-sm transition hover:border-sky-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-400/40"
+                      onClick={() => navigateToConversation(conversation.id)}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold text-slate-800 dark:text-slate-100">{conversation.title}</p>
+                          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                            {conversation.username || `用户 #${conversation.user_id}`}
+                            {conversation.email ? ` · ${conversation.email}` : ''}
+                          </p>
+                          <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{formatDate(conversation.updated_at)}</p>
+                        </div>
+                        <Badge tone="neutral">{conversation.message_count} 条</Badge>
+                      </div>
+                      {conversation.last_message_preview && (
+                        <p className="mt-2 line-clamp-2 text-xs text-slate-500 dark:text-slate-400">{conversation.last_message_preview}</p>
+                      )}
+                    </button>
+                  )) : (
+                    <p className="col-span-full rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">
+                      {reviewConversationsLoading ? '加载中...' : '暂无对话。'}
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+          </Card>
+
+          {/* Chat logs */}
           <Card className="space-y-4 p-5 xl:col-span-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="flex items-center gap-2"><MessagesSquare size={18} className="text-sky-600 dark:text-sky-200" /><div><h2 className="text-lg font-semibold">聊天日志</h2><p className="text-xs text-slate-500 dark:text-slate-400">全局展示最近的问答、来源和拦截记录；可按用户名、邮箱、问题或回答搜索。已删除/停用用户会保留标记。</p></div></div>
               <div className="min-w-0 lg:w-96">
                 <div className="flex gap-2">
-                  <Input value={chatSearch} onChange={(event) => setChatSearch(event.target.value)} placeholder="搜索用户名、邮箱、问题或回答" />
-                  <SecondaryButton className="shrink-0" onClick={() => void searchConversationMessages()}>搜索会话</SecondaryButton>
+                  <Input value={chatSearch} onChange={(event) => { setChatSearch(event.target.value); setLogPage(1); }} placeholder="搜索用户名、邮箱、问题或回答" />
+                  <SecondaryButton className="shrink-0" onClick={() => { setActiveLogTab('conversations'); void searchConversationMessages(); }}>搜索会话</SecondaryButton>
                 </div>
                 {selectedLogUserId !== null && <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:border-sky-400/30 dark:bg-sky-400/10 dark:text-sky-200"><span>正在查看用户：{logs.find((log) => log.user_id === selectedLogUserId)?.username || `#${selectedLogUserId}`}</span><button type="button" className="font-semibold underline underline-offset-2" onClick={() => void selectLogUser(null)}>返回全局</button></div>}
               </div>
             </div>
-            {matchingLogUsers.length ? <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40"><p className="mb-2 text-xs text-slate-500 dark:text-slate-400">匹配用户，点击查看该用户的所有会话：</p><div className="flex flex-wrap gap-2">{matchingLogUsers.map((log) => <SecondaryButton key={log.user_id} className="text-xs" onClick={() => void selectLogUser(log.user_id)}>{log.username}{log.email ? ` · ${log.email}` : ''}</SecondaryButton>)}</div></div> : null}
-            <div className="flex flex-wrap gap-2 text-xs"><Badge tone="neutral">全局日志 {logs.length}</Badge><Badge tone="blue">当前显示 {filteredLogs.length}</Badge><Badge tone="neutral">会话 {conversations.length}</Badge>{selectedLogUserId !== null && <Badge tone="yellow">用户会话视图</Badge>}</div>
-            <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-              {conversations.length ? conversations.map((conversation) => <button key={conversation.id} type="button" className="rounded-2xl border border-slate-200 bg-white p-4 text-left text-sm shadow-sm hover:border-sky-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-400/40" onClick={() => void openAdminConversation(conversation.id)}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate font-semibold text-slate-800 dark:text-slate-100">{conversation.title}</p><p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{conversation.username || `#${conversation.user_id}`} · {formatDate(conversation.updated_at)}</p></div><Badge tone="neutral">{conversation.message_count} 条</Badge></div>{conversation.last_message_preview && <MarkdownView content={conversation.last_message_preview} className="mt-2 line-clamp-2 text-xs text-slate-500 dark:text-slate-400" inline />}</button>) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无会话。</p>}
+
+            {/* Tabs */}
+            <div className="flex gap-0 border-b border-slate-200 dark:border-slate-700">
+              {([
+                { key: 'all' as const, label: '全局日志', count: logs.length },
+                { key: 'filtered' as const, label: '当前显示', count: filteredLogs.length },
+                { key: 'conversations' as const, label: '会话', count: conversationResults.length },
+              ]).map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  className={`px-4 py-2.5 text-sm font-medium transition-colors ${
+                    activeLogTab === tab.key
+                      ? 'border-b-2 border-sky-500 text-sky-600 dark:text-sky-200'
+                      : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                  onClick={() => { setActiveLogTab(tab.key); setLogPage(1); setExpandedLogId(null); }}
+                >
+                  {tab.label}
+                  <span className="ml-1.5 text-xs opacity-60">{tab.count}</span>
+                </button>
+              ))}
             </div>
-            {conversationResults.length ? <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40"><p className="mb-2 text-xs text-slate-500 dark:text-slate-400">会话消息搜索结果：</p><div className="grid gap-2 lg:grid-cols-2">{conversationResults.map((result) => <button key={`${result.conversation_id}-${result.message_id}`} type="button" className="rounded-xl border border-slate-200 bg-white p-3 text-left text-xs text-slate-600 hover:border-sky-300 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-sky-400/40" onClick={() => void openAdminConversation(result.conversation_id)}><span className="block font-semibold text-sky-700 dark:text-sky-200">{result.username || `#${result.user_id}`} · {result.title}</span><MarkdownView content={result.snippet} className="mt-1 line-clamp-2 text-xs" inline /></button>)}</div></div> : null}
-            <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-              {filteredLogs.length ? filteredLogs.map((log) => <div key={log.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-sm font-medium">{log.username}</p><p className="mt-1 break-all text-xs text-slate-500 dark:text-slate-400">{log.email || '无邮箱'} · {formatDate(log.created_at)}</p></div><div className="flex flex-wrap gap-2"><Badge tone={log.blocked ? 'red' : 'green'}>{log.blocked ? '已拦截' : '已回答'}</Badge><Badge tone="neutral">来源 {log.sources.length}</Badge></div></div><div className="mt-3 space-y-3 text-sm"><div><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">问题</p><MarkdownView content={log.question} className="mt-1 text-slate-800 dark:text-slate-100" /></div><div><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">回答</p><MarkdownView content={log.answer} className="mt-1 text-slate-700 dark:text-slate-200" /></div>{log.sources.length ? <div className="space-y-2"><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">检索来源</p>{log.sources.map((source: Source, index: number) => renderSourceCard(source, `${log.id}-${index}`, 'rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'))}</div> : null}</div></div>) : <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无匹配的聊天日志。</p>}
-            </div>
+
+            {/* Matching users */}
+            {matchingLogUsers.length > 0 && activeLogTab !== 'conversations' && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40">
+                <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">匹配用户，点击查看该用户的所有会话：</p>
+                <div className="flex flex-wrap gap-2">
+                  {matchingLogUsers.map((log) => (
+                    <SecondaryButton key={log.user_id} className="text-xs" onClick={() => void selectLogUser(log.user_id)}>
+                      {log.username}{log.email ? ` · ${log.email}` : ''}
+                    </SecondaryButton>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Conversations tab */}
+            {activeLogTab === 'conversations' && (
+              conversationResults.length > 0 ? (
+                <div className="overflow-hidden rounded-xl">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-700">
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-[#cdd6f4]">时间</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-[#cdd6f4]">用户名</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-[#cdd6f4]">会话标题</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-[#cdd6f4]">内容摘要</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-[#cdd6f4]">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {conversationResults.map((result) => (
+                        <tr key={`${result.conversation_id}-${result.message_id}`} className="border-b border-slate-100 transition-colors hover:bg-slate-50 dark:border-slate-800/50 dark:hover:bg-slate-800/30">
+                          <td className="whitespace-nowrap px-4 py-3 text-slate-600 dark:text-[#cdd6f4]">{formatLogDate(result.created_at)}</td>
+                          <td className="px-4 py-3 text-slate-700 dark:text-[#cdd6f4]">{result.username || `#${result.user_id}`}</td>
+                          <td className="max-w-[200px] truncate px-4 py-3 text-slate-700 dark:text-[#cdd6f4]">{result.title}</td>
+                          <td className="max-w-[200px] truncate px-4 py-3 text-slate-500 dark:text-[#cdd6f4]/70">{result.snippet.length > 20 ? `${result.snippet.slice(0, 20)}...` : result.snippet}</td>
+                          <td className="px-4 py-3">
+                            <SecondaryButton className="text-xs" onClick={() => { window.location.href = `/admin/conversations/${result.conversation_id}`; }}>查看会话</SecondaryButton>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">请搜索会话消息进行查看。</p>
+              )
+            )}
+
+            {/* Logs tabs (all / filtered) */}
+            {activeLogTab !== 'conversations' && (() => {
+              const sourceData = activeLogTab === 'all' ? logs : filteredLogs;
+              const visibleData = sourceData.filter((log) => !hiddenLogIds.has(log.id));
+              const totalPages = Math.max(1, Math.ceil(visibleData.length / LOGS_PER_PAGE));
+              const safePage = Math.min(logPage, totalPages);
+              const pagedData = visibleData.slice((safePage - 1) * LOGS_PER_PAGE, safePage * LOGS_PER_PAGE);
+
+              if (visibleData.length === 0) {
+                return (
+                  <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">暂无匹配的聊天日志。</p>
+                );
+              }
+
+              return (
+                <>
+                  <div className="overflow-hidden rounded-xl">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 dark:border-slate-700">
+                          <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-[#cdd6f4]">时间</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-[#cdd6f4]">用户名</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-[#cdd6f4]">问题</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-[#cdd6f4]">状态</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-[#cdd6f4]">来源</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-[#cdd6f4]">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pagedData.map((log) => (
+                          <tr key={log.id} className="border-b border-slate-100 transition-colors hover:bg-slate-50 dark:border-slate-800/50 dark:hover:bg-slate-800/30">
+                            <td className="whitespace-nowrap px-4 py-3 text-slate-600 dark:text-[#cdd6f4]">{formatLogDate(log.created_at)}</td>
+                            <td className="px-4 py-3 text-slate-700 dark:text-[#cdd6f4]">{log.username}</td>
+                            <td className="max-w-[200px] truncate px-4 py-3 text-slate-700 dark:text-[#cdd6f4]">{log.question.length > 20 ? `${log.question.slice(0, 20)}...` : log.question}</td>
+                            <td className="px-4 py-3">
+                              <span className={`font-medium ${log.blocked ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                                {log.blocked ? '已拦截' : '已回答'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right tabular-nums text-slate-700 dark:text-[#cdd6f4]">{log.sources.length}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex gap-2">
+                                <SecondaryButton className="text-xs" onClick={() => setExpandedLogId(expandedLogId === log.id ? null : log.id)}>
+                                  {expandedLogId === log.id ? '收起详情' : '查看详情'}
+                                </SecondaryButton>
+                                <button
+                                  type="button"
+                                  className="text-xs text-slate-400 transition hover:text-red-500 dark:text-slate-500 dark:hover:text-red-400"
+                                  onClick={() => setHiddenLogIds((prev) => { const next = new Set(prev); next.add(log.id); return next; })}
+                                  title="隐藏此条"
+                                >
+                                  删除
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Expanded detail */}
+                  {expandedLogId !== null && (() => {
+                    const log = sourceData.find((l) => l.id === expandedLogId);
+                    if (!log) return null;
+                    return (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/50">
+                        <div className="mb-3 flex items-center justify-between">
+                          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">日志详情 · {log.username} · {formatLogDate(log.created_at)}</h3>
+                          <button type="button" className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" onClick={() => setExpandedLogId(null)}>收起</button>
+                        </div>
+                        <div className="space-y-4">
+                          <div>
+                            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">问题</p>
+                            <MarkdownView content={log.question} className="text-slate-800 dark:text-slate-100" />
+                          </div>
+                          <div>
+                            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">回答</p>
+                            <MarkdownView content={log.answer} className="text-slate-700 dark:text-slate-200" />
+                          </div>
+                          {log.sources.length > 0 && (
+                            <div>
+                              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">检索来源</p>
+                              <div className="space-y-2">
+                                {log.sources.map((source: Source, index: number) => renderSourceCard(source, `${log.id}-${index}`, 'rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Pagination */}
+                  <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                    <span>共 {visibleData.length} 条记录</span>
+                    <div className="flex items-center gap-2">
+                      <SecondaryButton className="text-xs" disabled={safePage <= 1} onClick={() => setLogPage((p) => Math.max(1, p - 1))}>上一页</SecondaryButton>
+                      <span className="tabular-nums">第 {safePage} / {totalPages} 页</span>
+                      <SecondaryButton className="text-xs" disabled={safePage >= totalPages} onClick={() => setLogPage((p) => Math.min(totalPages, p + 1))}>下一页</SecondaryButton>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
           </Card>
         </div>
       </div>
-      {selectedConversation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-          <Card className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-800">
-              <div className="min-w-0">
-                <h2 className="break-all text-lg font-bold">{selectedConversation.title}</h2>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{selectedConversation.username || `#${selectedConversation.user_id}`} · 创建 {formatDate(selectedConversation.created_at)} · 更新 {formatDate(selectedConversation.updated_at)}</p>
-              </div>
-              <DangerButton className="px-3" onClick={() => setSelectedConversation(null)} aria-label="关闭会话预览" title="关闭会话预览"><X size={16} /></DangerButton>
-            </div>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-slate-50/60 p-5 dark:bg-slate-950/40">
-              {selectedConversation.messages.map((message) => <div key={message.id} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"><div className="mb-2 flex items-center gap-2"><Badge tone={message.role === 'user' ? 'blue' : message.blocked ? 'red' : 'green'}>{message.role === 'user' ? '用户' : message.blocked ? '助手（拦截）' : '助手'}</Badge><span className="text-xs text-slate-500 dark:text-slate-400">{formatDate(message.created_at)}</span></div><MarkdownView content={message.content} />{message.sources.length ? <div className="mt-3 space-y-2"><p className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">来源</p>{(message.sources as Source[]).map((source, index) => renderSourceCard(source, `${message.id}-${index}`, 'rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-800 dark:bg-slate-950/50'))}</div> : null}</div>)}
-            </div>
-          </Card>
-        </div>
-      )}
       {documentDetail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
           <Card className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden">

@@ -157,7 +157,7 @@ export default function ChatPage() {
                 onClick={() => void openConversation(conversation.id)}
               >
                 <span className="block truncate font-medium">{conversation.title}</span>
-                {conversation.last_message_preview && <span className="mt-1 line-clamp-2 block">{conversation.last_message_preview}</span>}
+                {conversation.last_message_preview && <MarkdownView content={conversation.last_message_preview} className="mt-1 line-clamp-2 text-xs" inline />}
               </button>
             )) : <p className="rounded-xl border border-dashed border-slate-200 p-3 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">暂无历史对话。</p>}
           </div>
@@ -243,7 +243,7 @@ export default function ChatPage() {
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/60 p-5 dark:bg-slate-950/40">
               {documentDetail.content.trim() ? (
-                <MarkdownView content={documentDetail.content} variant="document" />
+                <MarkdownView content={documentDetail.content} />
               ) : (
                 <p className="text-sm text-slate-500 dark:text-slate-400">该文档没有可显示的文本内容。</p>
               )}
